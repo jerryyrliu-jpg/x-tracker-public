@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import yaml
 
-SCRAPER_BASE = Path(os.environ.get("SCRAPER_DIR", "~/scraper")).expanduser()
-load_dotenv(SCRAPER_BASE / "config.env")
+SCRAPER_BASE = Path(os.getcwd())
+load_dotenv(SCRAPER_BASE / ".env")
 DB_PATH = SCRAPER_BASE / "tweets.db"
 
 
@@ -64,7 +64,7 @@ def generate_summary(account_cfg: dict, tweets_text: str):
     try:
         # 使用 subprocess 呼叫 Gemini CLI
         result = subprocess.run(
-            ["gemini", "--model", "gemini-2.0-flash"], # 預設使用 2.0-flash
+            ["gemini", "--model", "gemini-3.1-pro-preview"], # 預設使用 2.0-flash
             input=prompt,
             capture_output=True,
             text=True,

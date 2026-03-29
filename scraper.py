@@ -21,8 +21,8 @@ import yaml
 from dotenv import load_dotenv
 from twscrape import API
 
-SCRAPER_BASE = Path(os.environ.get("SCRAPER_DIR", "~/scraper")).expanduser()
-load_dotenv(SCRAPER_BASE / "config.env")
+SCRAPER_BASE = Path(os.getcwd())
+load_dotenv(SCRAPER_BASE / ".env")
 
 DB_PATH = SCRAPER_BASE / "tweets.db"
 ACCOUNTS_DB = SCRAPER_BASE / "accounts.db"
