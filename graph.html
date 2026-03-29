@@ -1,0 +1,321 @@
+<html>
+    <head>
+        <meta charset="utf-8">
+        
+            <script>function neighbourhoodHighlight(params) {
+  // console.log("in nieghbourhoodhighlight");
+  allNodes = nodes.get({ returnType: "Object" });
+  // originalNodes = JSON.parse(JSON.stringify(allNodes));
+  // if something is selected:
+  if (params.nodes.length > 0) {
+    highlightActive = true;
+    var i, j;
+    var selectedNode = params.nodes[0];
+    var degrees = 2;
+
+    // mark all nodes as hard to read.
+    for (let nodeId in allNodes) {
+      // nodeColors[nodeId] = allNodes[nodeId].color;
+      allNodes[nodeId].color = "rgba(200,200,200,0.5)";
+      if (allNodes[nodeId].hiddenLabel === undefined) {
+        allNodes[nodeId].hiddenLabel = allNodes[nodeId].label;
+        allNodes[nodeId].label = undefined;
+      }
+    }
+    var connectedNodes = network.getConnectedNodes(selectedNode);
+    var allConnectedNodes = [];
+
+    // get the second degree nodes
+    for (i = 1; i < degrees; i++) {
+      for (j = 0; j < connectedNodes.length; j++) {
+        allConnectedNodes = allConnectedNodes.concat(
+          network.getConnectedNodes(connectedNodes[j])
+        );
+      }
+    }
+
+    // all second degree nodes get a different color and their label back
+    for (i = 0; i < allConnectedNodes.length; i++) {
+      // allNodes[allConnectedNodes[i]].color = "pink";
+      allNodes[allConnectedNodes[i]].color = "rgba(150,150,150,0.75)";
+      if (allNodes[allConnectedNodes[i]].hiddenLabel !== undefined) {
+        allNodes[allConnectedNodes[i]].label =
+          allNodes[allConnectedNodes[i]].hiddenLabel;
+        allNodes[allConnectedNodes[i]].hiddenLabel = undefined;
+      }
+    }
+
+    // all first degree nodes get their own color and their label back
+    for (i = 0; i < connectedNodes.length; i++) {
+      // allNodes[connectedNodes[i]].color = undefined;
+      allNodes[connectedNodes[i]].color = nodeColors[connectedNodes[i]];
+      if (allNodes[connectedNodes[i]].hiddenLabel !== undefined) {
+        allNodes[connectedNodes[i]].label =
+          allNodes[connectedNodes[i]].hiddenLabel;
+        allNodes[connectedNodes[i]].hiddenLabel = undefined;
+      }
+    }
+
+    // the main node gets its own color and its label back.
+    // allNodes[selectedNode].color = undefined;
+    allNodes[selectedNode].color = nodeColors[selectedNode];
+    if (allNodes[selectedNode].hiddenLabel !== undefined) {
+      allNodes[selectedNode].label = allNodes[selectedNode].hiddenLabel;
+      allNodes[selectedNode].hiddenLabel = undefined;
+    }
+  } else if (highlightActive === true) {
+    // console.log("highlightActive was true");
+    // reset all nodes
+    for (let nodeId in allNodes) {
+      // allNodes[nodeId].color = "purple";
+      allNodes[nodeId].color = nodeColors[nodeId];
+      // delete allNodes[nodeId].color;
+      if (allNodes[nodeId].hiddenLabel !== undefined) {
+        allNodes[nodeId].label = allNodes[nodeId].hiddenLabel;
+        allNodes[nodeId].hiddenLabel = undefined;
+      }
+    }
+    highlightActive = false;
+  }
+
+  // transform the object into an array
+  var updateArray = [];
+  if (params.nodes.length > 0) {
+    for (let nodeId in allNodes) {
+      if (allNodes.hasOwnProperty(nodeId)) {
+        // console.log(allNodes[nodeId]);
+        updateArray.push(allNodes[nodeId]);
+      }
+    }
+    nodes.update(updateArray);
+  } else {
+    // console.log("Nothing was selected");
+    for (let nodeId in allNodes) {
+      if (allNodes.hasOwnProperty(nodeId)) {
+        // console.log(allNodes[nodeId]);
+        // allNodes[nodeId].color = {};
+        updateArray.push(allNodes[nodeId]);
+      }
+    }
+    nodes.update(updateArray);
+  }
+}
+
+function filterHighlight(params) {
+  allNodes = nodes.get({ returnType: "Object" });
+  // if something is selected:
+  if (params.nodes.length > 0) {
+    filterActive = true;
+    let selectedNodes = params.nodes;
+
+    // hiding all nodes and saving the label
+    for (let nodeId in allNodes) {
+      allNodes[nodeId].hidden = true;
+      if (allNodes[nodeId].savedLabel === undefined) {
+        allNodes[nodeId].savedLabel = allNodes[nodeId].label;
+        allNodes[nodeId].label = undefined;
+      }
+    }
+
+    for (let i=0; i < selectedNodes.length; i++) {
+      allNodes[selectedNodes[i]].hidden = false;
+      if (allNodes[selectedNodes[i]].savedLabel !== undefined) {
+        allNodes[selectedNodes[i]].label = allNodes[selectedNodes[i]].savedLabel;
+        allNodes[selectedNodes[i]].savedLabel = undefined;
+      }
+    }
+
+  } else if (filterActive === true) {
+    // reset all nodes
+    for (let nodeId in allNodes) {
+      allNodes[nodeId].hidden = false;
+      if (allNodes[nodeId].savedLabel !== undefined) {
+        allNodes[nodeId].label = allNodes[nodeId].savedLabel;
+        allNodes[nodeId].savedLabel = undefined;
+      }
+    }
+    filterActive = false;
+  }
+
+  // transform the object into an array
+  var updateArray = [];
+  if (params.nodes.length > 0) {
+    for (let nodeId in allNodes) {
+      if (allNodes.hasOwnProperty(nodeId)) {
+        updateArray.push(allNodes[nodeId]);
+      }
+    }
+    nodes.update(updateArray);
+  } else {
+    for (let nodeId in allNodes) {
+      if (allNodes.hasOwnProperty(nodeId)) {
+        updateArray.push(allNodes[nodeId]);
+      }
+    }
+    nodes.update(updateArray);
+  }
+}
+
+function selectNode(nodes) {
+  network.selectNodes(nodes);
+  neighbourhoodHighlight({ nodes: nodes });
+  return nodes;
+}
+
+function selectNodes(nodes) {
+  network.selectNodes(nodes);
+  filterHighlight({nodes: nodes});
+  return nodes;
+}
+
+function highlightFilter(filter) {
+  let selectedNodes = []
+  let selectedProp = filter['property']
+  if (filter['item'] === 'node') {
+    let allNodes = nodes.get({ returnType: "Object" });
+    for (let nodeId in allNodes) {
+      if (allNodes[nodeId][selectedProp] && filter['value'].includes((allNodes[nodeId][selectedProp]).toString())) {
+        selectedNodes.push(nodeId)
+      }
+    }
+  }
+  else if (filter['item'] === 'edge'){
+    let allEdges = edges.get({returnType: 'object'});
+    // check if the selected property exists for selected edge and select the nodes connected to the edge
+    for (let edge in allEdges) {
+      if (allEdges[edge][selectedProp] && filter['value'].includes((allEdges[edge][selectedProp]).toString())) {
+        selectedNodes.push(allEdges[edge]['from'])
+        selectedNodes.push(allEdges[edge]['to'])
+      }
+    }
+  }
+  selectNodes(selectedNodes)
+}</script>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/dist/vis-network.min.css" integrity="sha512-WgxfT5LWjfszlPHXRmBWHkV2eceiWTOBvrKCNbdgDYTHrT2AeLCGbF4sZlZw3UMN3WtL0tGUoIAKsu8mllg/XA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/vis-network.min.js" integrity="sha512-LnvoEWDFrqGHlHmDD2101OrLcbsfkrzoSpvtSQtxK3RMnRV0eOkhhBN2dXHKRrUU8p2DGRTk35n4O8nWSVe1mQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+            
+            
+            
+            
+            
+            
+
+        
+<center>
+<h1></h1>
+</center>
+
+<!-- <link rel="stylesheet" href="../node_modules/vis/dist/vis.min.css" type="text/css" />
+<script type="text/javascript" src="../node_modules/vis/dist/vis.js"> </script>-->
+        <link
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          integrity="sha384-eOJMYsd53ii+scO/bJGFsiCZc+5NDVN2yr8+0RDqr0Ql0h+rP48ckxlpbzKgwra6"
+          crossorigin="anonymous"
+        />
+        <script
+          src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-JEW9xMcG8R+pH31jmWH6WWP0WintQrMb4s7ZOdauHnUtxwoG2vI5DkLtS3qm9Ekf"
+          crossorigin="anonymous"
+        ></script>
+
+
+        <center>
+          <h1></h1>
+        </center>
+        <style type="text/css">
+
+             #mynetwork {
+                 width: 100%;
+                 height: 600px;
+                 background-color: #ffffff;
+                 border: 1px solid lightgray;
+                 position: relative;
+                 float: left;
+             }
+
+             
+
+             
+
+             
+        </style>
+    </head>
+
+
+    <body>
+        <div class="card" style="width: 100%">
+            
+            
+            <div id="mynetwork" class="card-body"></div>
+        </div>
+
+        
+        
+
+        <script type="text/javascript">
+
+              // initialize global variables.
+              var edges;
+              var nodes;
+              var allNodes;
+              var allEdges;
+              var nodeColors;
+              var originalNodes;
+              var network;
+              var container;
+              var options, data;
+              var filter = {
+                  item : '',
+                  property : '',
+                  value : []
+              };
+
+              
+
+              
+
+              // This method is responsible for drawing the graph, returns the drawn network
+              function drawGraph() {
+                  var container = document.getElementById('mynetwork');
+
+                  
+
+                  // parsing and collecting nodes and edges from the python
+                  nodes = new vis.DataSet([{"color": "#97c2fc", "font": {"color": "black"}, "id": "EWY", "label": "EWY", "shape": "dot", "size": 55, "title": "EWY: 20 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "SPY", "label": "SPY", "shape": "dot", "size": 25, "title": "SPY: 5 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "LITE", "label": "LITE", "shape": "dot", "size": 137, "title": "LITE: 61 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "MU", "label": "MU", "shape": "dot", "size": 41, "title": "MU: 13 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "SNDK", "label": "SNDK", "shape": "dot", "size": 53, "title": "SNDK: 19 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "TSM", "label": "TSM", "shape": "dot", "size": 45, "title": "TSM: 15 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "AAOI", "label": "AAOI", "shape": "dot", "size": 113, "title": "AAOI: 49 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "NVDA", "label": "NVDA", "shape": "dot", "size": 71, "title": "NVDA: 28 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "MRVL", "label": "MRVL", "shape": "dot", "size": 31, "title": "MRVL: 8 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "AVGO", "label": "AVGO", "shape": "dot", "size": 29, "title": "AVGO: 7 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "SIVE", "label": "SIVE", "shape": "dot", "size": 115, "title": "SIVE: 50 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "QLCM", "label": "QLCM", "shape": "dot", "size": 19, "title": "QLCM: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "ARM", "label": "ARM", "shape": "dot", "size": 27, "title": "ARM: 6 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "NBIS", "label": "NBIS", "shape": "dot", "size": 39, "title": "NBIS: 12 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "MSFT", "label": "MSFT", "shape": "dot", "size": 31, "title": "MSFT: 8 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "AXTI", "label": "AXTI", "shape": "dot", "size": 125, "title": "AXTI: 55 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "RDDT", "label": "RDDT", "shape": "dot", "size": 37, "title": "RDDT: 11 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "TSEM", "label": "TSEM", "shape": "dot", "size": 61, "title": "TSEM: 23 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "SIVEF", "label": "SIVEF", "shape": "dot", "size": 25, "title": "SIVEF: 5 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "GOOGL", "label": "GOOGL", "shape": "dot", "size": 31, "title": "GOOGL: 8 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "POET", "label": "POET", "shape": "dot", "size": 25, "title": "POET: 5 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "COHR", "label": "COHR", "shape": "dot", "size": 69, "title": "COHR: 27 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "MTSI", "label": "MTSI", "shape": "dot", "size": 29, "title": "MTSI: 7 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "HIMX", "label": "HIMX", "shape": "dot", "size": 21, "title": "HIMX: 3 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "CIEN", "label": "CIEN", "shape": "dot", "size": 19, "title": "CIEN: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "INTC", "label": "INTC", "shape": "dot", "size": 31, "title": "INTC: 8 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "JBL", "label": "JBL", "shape": "dot", "size": 23, "title": "JBL: 4 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "SOI", "label": "SOI", "shape": "dot", "size": 55, "title": "SOI: 20 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "IQE", "label": "IQE", "shape": "dot", "size": 55, "title": "IQE: 20 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "HOOD", "label": "HOOD", "shape": "dot", "size": 27, "title": "HOOD: 6 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "BKSY", "label": "BKSY", "shape": "dot", "size": 21, "title": "BKSY: 3 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "PL", "label": "PL", "shape": "dot", "size": 19, "title": "PL: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "SPIR", "label": "SPIR", "shape": "dot", "size": 19, "title": "SPIR: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "BA", "label": "BA", "shape": "dot", "size": 19, "title": "BA: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "RTX", "label": "RTX", "shape": "dot", "size": 19, "title": "RTX: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "META", "label": "META", "shape": "dot", "size": 53, "title": "META: 19 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "AMZN", "label": "AMZN", "shape": "dot", "size": 29, "title": "AMZN: 7 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "AIXA", "label": "AIXA", "shape": "dot", "size": 19, "title": "AIXA: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "AEHR", "label": "AEHR", "shape": "dot", "size": 23, "title": "AEHR: 4 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "FN", "label": "FN", "shape": "dot", "size": 21, "title": "FN: 3 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "IREN", "label": "IREN", "shape": "dot", "size": 41, "title": "IREN: 13 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "BKKT", "label": "BKKT", "shape": "dot", "size": 19, "title": "BKKT: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "CRWV", "label": "CRWV", "shape": "dot", "size": 19, "title": "CRWV: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "VCX", "label": "VCX", "shape": "dot", "size": 25, "title": "VCX: 5 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "HIMS", "label": "HIMS", "shape": "dot", "size": 37, "title": "HIMS: 11 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "CRCL", "label": "CRCL", "shape": "dot", "size": 35, "title": "CRCL: 10 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "LCID", "label": "LCID", "shape": "dot", "size": 19, "title": "LCID: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "ORCL", "label": "ORCL", "shape": "dot", "size": 25, "title": "ORCL: 5 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "KRKNF", "label": "KRKNF", "shape": "dot", "size": 27, "title": "KRKNF: 6 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "PLTR", "label": "PLTR", "shape": "dot", "size": 23, "title": "PLTR: 4 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "AMD", "label": "AMD", "shape": "dot", "size": 25, "title": "AMD: 5 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "SLOIF", "label": "SLOIF", "shape": "dot", "size": 25, "title": "SLOIF: 5 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "CVX", "label": "CVX", "shape": "dot", "size": 21, "title": "CVX: 3 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "LMT", "label": "LMT", "shape": "dot", "size": 21, "title": "LMT: 3 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "AVAV", "label": "AVAV", "shape": "dot", "size": 19, "title": "AVAV: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "XLE", "label": "XLE", "shape": "dot", "size": 19, "title": "XLE: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "LASR", "label": "LASR", "shape": "dot", "size": 29, "title": "LASR: 7 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "NOC", "label": "NOC", "shape": "dot", "size": 21, "title": "NOC: 3 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "LPTH", "label": "LPTH", "shape": "dot", "size": 21, "title": "LPTH: 3 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "XLU", "label": "XLU", "shape": "dot", "size": 19, "title": "XLU: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "V", "label": "V", "shape": "dot", "size": 19, "title": "V: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "APO", "label": "APO", "shape": "dot", "size": 19, "title": "APO: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "TTMI", "label": "TTMI", "shape": "dot", "size": 19, "title": "TTMI: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "SANM", "label": "SANM", "shape": "dot", "size": 19, "title": "SANM: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "TSLA", "label": "TSLA", "shape": "dot", "size": 21, "title": "TSLA: 3 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "RKLB", "label": "RKLB", "shape": "dot", "size": 21, "title": "RKLB: 3 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "OPTT", "label": "OPTT", "shape": "dot", "size": 19, "title": "OPTT: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "CODA", "label": "CODA", "shape": "dot", "size": 25, "title": "CODA: 5 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "NVO", "label": "NVO", "shape": "dot", "size": 23, "title": "NVO: 4 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "ATI", "label": "ATI", "shape": "dot", "size": 19, "title": "ATI: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "AEVA", "label": "AEVA", "shape": "dot", "size": 19, "title": "AEVA: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "RPI", "label": "RPI", "shape": "dot", "size": 19, "title": "RPI: 2 \u6b21\u63d0\u53ca"}, {"color": "#97c2fc", "font": {"color": "black"}, "id": "JETS", "label": "JETS", "shape": "dot", "size": 19, "title": "JETS: 2 \u6b21\u63d0\u53ca"}]);
+                  edges = new vis.DataSet([{"from": "EWY", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPY", "value": 1, "width": 1}, {"from": "EWY", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LITE", "value": 1, "width": 1}, {"from": "EWY", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "MU", "value": 3, "width": 1}, {"from": "EWY", "title": "\u95dc\u806f\u5f37\u5ea6: 4", "to": "SNDK", "value": 4, "width": 1}, {"from": "EWY", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "TSM", "value": 2, "width": 1}, {"from": "EWY", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AAOI", "value": 2, "width": 1}, {"from": "EWY", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NVDA", "value": 1, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "AVGO", "value": 3, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 6", "to": "SIVE", "value": 6, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "QLCM", "value": 1, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "ARM", "value": 2, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AAOI", "value": 1, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LITE", "value": 1, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NBIS", "value": 1, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "MSFT", "value": 2, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AXTI", "value": 2, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "TSM", "value": 1, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RDDT", "value": 1, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "TSEM", "value": 1, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SIVEF", "value": 1, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "GOOGL", "value": 1, "width": 1}, {"from": "MRVL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "POET", "value": 1, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 4", "to": "SIVE", "value": 4, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "QLCM", "value": 1, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "ARM", "value": 2, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AAOI", "value": 2, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 5", "to": "LITE", "value": 5, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NBIS", "value": 1, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "MSFT", "value": 1, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "TSM", "value": 3, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RDDT", "value": 1, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "TSEM", "value": 3, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "COHR", "value": 3, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "MTSI", "value": 2, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMX", "value": 1, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "POET", "value": 1, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "AVGO", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "GOOGL", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "QLCM", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 23", "to": "LITE", "value": 23, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 12", "to": "AXTI", "value": 12, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 4", "to": "JBL", "value": 4, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 11", "to": "AAOI", "value": 11, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 5", "to": "SOI", "value": 5, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 6", "to": "IQE", "value": 6, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 10", "to": "TSEM", "value": 10, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 9", "to": "COHR", "value": 9, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 7", "to": "MTSI", "value": 7, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "ARM", "value": 2, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "TSM", "value": 2, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RDDT", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "POET", "value": 3, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "NVDA", "value": 3, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HOOD", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "BKSY", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PL", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "BA", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RTX", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 5", "to": "SIVEF", "value": 5, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "META", "value": 3, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "AMZN", "value": 3, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "MSFT", "value": 3, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "INTC", "value": 2, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AIXA", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "CIEN", "value": 2, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AEHR", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "GOOGL", "value": 3, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMX", "value": 1, "width": 1}, {"from": "SIVE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "FN", "value": 1, "width": 1}, {"from": "QLCM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NVDA", "value": 1, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "BKKT", "value": 2, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 4", "to": "NBIS", "value": 4, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CRWV", "value": 1, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "VCX", "value": 1, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SNDK", "value": 1, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AAOI", "value": 2, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "POET", "value": 1, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "NVDA", "value": 2, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LITE", "value": 1, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AXTI", "value": 1, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMS", "value": 1, "width": 1}, {"from": "IREN", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CRCL", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "LCID", "value": 2, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "ARM", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "POET", "value": 2, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 8", "to": "AXTI", "value": 8, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "META", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AMZN", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "JBL", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SIVEF", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "GOOGL", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "SOI", "value": 3, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "NBIS", "value": 2, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "ORCL", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "KRKNF", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PLTR", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 4", "to": "AMD", "value": 4, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "TSEM", "value": 3, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 4", "to": "COHR", "value": 4, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 6", "to": "LITE", "value": 6, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "TSM", "value": 3, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SLOIF", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SNDK", "value": 1, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "IQE", "value": 2, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AAOI", "value": 2, "width": 1}, {"from": "NVDA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HOOD", "value": 1, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "ARM", "value": 1, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 26", "to": "AAOI", "value": 26, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NBIS", "value": 1, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "MSFT", "value": 2, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 20", "to": "AXTI", "value": 20, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "JBL", "value": 2, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 5", "to": "SOI", "value": 5, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 14", "to": "IQE", "value": 14, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 7", "to": "TSEM", "value": 7, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 24", "to": "COHR", "value": 24, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 7", "to": "MTSI", "value": 7, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 4", "to": "GOOGL", "value": 4, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "BKSY", "value": 1, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PL", "value": 1, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "SIVEF", "value": 2, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AIXA", "value": 1, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "CIEN", "value": 2, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AEHR", "value": 2, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "META", "value": 1, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AMZN", "value": 1, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "TSM", "value": 3, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMX", "value": 1, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "POET", "value": 2, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "INTC", "value": 2, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "FN", "value": 3, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "MU", "value": 3, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "SNDK", "value": 3, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMS", "value": 1, "width": 1}, {"from": "LITE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "ORCL", "value": 1, "width": 1}, {"from": "CVX", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "LMT", "value": 2, "width": 1}, {"from": "CVX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPY", "value": 1, "width": 1}, {"from": "CVX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AVAV", "value": 1, "width": 1}, {"from": "CVX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "XLE", "value": 1, "width": 1}, {"from": "CVX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LASR", "value": 1, "width": 1}, {"from": "CVX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NOC", "value": 1, "width": 1}, {"from": "CVX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RTX", "value": 1, "width": 1}, {"from": "CVX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LPTH", "value": 1, "width": 1}, {"from": "ARM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AAOI", "value": 1, "width": 1}, {"from": "ARM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NBIS", "value": 1, "width": 1}, {"from": "ARM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "MSFT", "value": 1, "width": 1}, {"from": "ARM", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "TSM", "value": 2, "width": 1}, {"from": "ARM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RDDT", "value": 1, "width": 1}, {"from": "ARM", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "TSEM", "value": 2, "width": 1}, {"from": "ARM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "META", "value": 1, "width": 1}, {"from": "ARM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AMD", "value": 1, "width": 1}, {"from": "ARM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "NBIS", "value": 2, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "MSFT", "value": 1, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 22", "to": "AXTI", "value": 22, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "HIMX", "value": 2, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 7", "to": "SOI", "value": 7, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 12", "to": "IQE", "value": 12, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 6", "to": "TSEM", "value": 6, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 15", "to": "COHR", "value": 15, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 5", "to": "MTSI", "value": 5, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 5", "to": "SNDK", "value": 5, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "BKSY", "value": 1, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PL", "value": 1, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AIXA", "value": 1, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "CIEN", "value": 2, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AEHR", "value": 2, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "TSM", "value": 1, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "POET", "value": 1, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "INTC", "value": 2, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "MU", "value": 2, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMS", "value": 1, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "ORCL", "value": 1, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "FN", "value": 2, "width": 1}, {"from": "AAOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "GOOGL", "value": 1, "width": 1}, {"from": "NBIS", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "MSFT", "value": 1, "width": 1}, {"from": "NBIS", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "CRWV", "value": 2, "width": 1}, {"from": "NBIS", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "META", "value": 2, "width": 1}, {"from": "NBIS", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "POET", "value": 1, "width": 1}, {"from": "NBIS", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SOI", "value": 1, "width": 1}, {"from": "NBIS", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AXTI", "value": 2, "width": 1}, {"from": "NBIS", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "IQE", "value": 1, "width": 1}, {"from": "NBIS", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "NBIS", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CRCL", "value": 1, "width": 1}, {"from": "MSFT", "title": "\u95dc\u806f\u5f37\u5ea6: 6", "to": "META", "value": 6, "width": 1}, {"from": "MSFT", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "GOOGL", "value": 3, "width": 1}, {"from": "MSFT", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "AMZN", "value": 3, "width": 1}, {"from": "MSFT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "JBL", "value": 1, "width": 1}, {"from": "MSFT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "MSFT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SIVEF", "value": 1, "width": 1}, {"from": "MSFT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "COHR", "value": 1, "width": 1}, {"from": "CRWV", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CRCL", "value": 1, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RDDT", "value": 1, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "VCX", "value": 1, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 4", "to": "GOOGL", "value": 4, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 6", "to": "AMZN", "value": 6, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "TSM", "value": 1, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AMD", "value": 1, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "INTC", "value": 2, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "ORCL", "value": 2, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "JBL", "value": 2, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SIVEF", "value": 1, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "COHR", "value": 1, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "HIMS", "value": 3, "width": 1}, {"from": "META", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "HOOD", "value": 3, "width": 1}, {"from": "CRCL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RDDT", "value": 1, "width": 1}, {"from": "CRCL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "XLU", "value": 1, "width": 1}, {"from": "CRCL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "V", "value": 1, "width": 1}, {"from": "RDDT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HOOD", "value": 1, "width": 1}, {"from": "RDDT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPY", "value": 1, "width": 1}, {"from": "RDDT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AVAV", "value": 1, "width": 1}, {"from": "RDDT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "TSM", "value": 1, "width": 1}, {"from": "RDDT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "TSEM", "value": 1, "width": 1}, {"from": "RDDT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AXTI", "value": 1, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMX", "value": 1, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 5", "to": "SOI", "value": 5, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 12", "to": "IQE", "value": 12, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 5", "to": "TSEM", "value": 5, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 10", "to": "COHR", "value": 10, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "MTSI", "value": 1, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "POET", "value": 1, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AIXA", "value": 1, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AEHR", "value": 2, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 7", "to": "SNDK", "value": 7, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "MU", "value": 2, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMS", "value": 1, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "ORCL", "value": 1, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "FN", "value": 1, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AMD", "value": 1, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "INTC", "value": 2, "width": 1}, {"from": "AXTI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "SLOIF", "value": 2, "width": 1}, {"from": "HIMX", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "TSM", "value": 2, "width": 1}, {"from": "HIMX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "COHR", "value": 1, "width": 1}, {"from": "HIMX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "MTSI", "value": 1, "width": 1}, {"from": "HIMX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "POET", "value": 1, "width": 1}, {"from": "HIMX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "HIMX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "TSEM", "value": 1, "width": 1}, {"from": "HIMX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "HOOD", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPY", "value": 1, "width": 1}, {"from": "HOOD", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "IQE", "value": 1, "width": 1}, {"from": "HOOD", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "HIMS", "value": 3, "width": 1}, {"from": "SPY", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LMT", "value": 1, "width": 1}, {"from": "JBL", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AMZN", "value": 2, "width": 1}, {"from": "JBL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "JBL", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "SIVEF", "value": 2, "width": 1}, {"from": "JBL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "GOOGL", "value": 1, "width": 1}, {"from": "TSM", "title": "\u95dc\u806f\u5f37\u5ea6: 5", "to": "TSEM", "value": 5, "width": 1}, {"from": "TSM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AMD", "value": 1, "width": 1}, {"from": "TSM", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "INTC", "value": 2, "width": 1}, {"from": "TSM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "APO", "value": 1, "width": 1}, {"from": "TSM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "COHR", "value": 1, "width": 1}, {"from": "TSM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "MTSI", "value": 1, "width": 1}, {"from": "TSM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "POET", "value": 1, "width": 1}, {"from": "TSM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "TSM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SOI", "value": 1, "width": 1}, {"from": "TSM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "GOOGL", "value": 1, "width": 1}, {"from": "TSM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SNDK", "value": 1, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 5", "to": "IQE", "value": 5, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 6", "to": "TSEM", "value": 6, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "COHR", "value": 3, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "MTSI", "value": 2, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "BKSY", "value": 1, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PL", "value": 1, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AIXA", "value": 1, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AEHR", "value": 2, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "SLOIF", "value": 2, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "MU", "value": 1, "width": 1}, {"from": "SOI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SNDK", "value": 1, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "TSEM", "value": 3, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 7", "to": "COHR", "value": 7, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "MTSI", "value": 2, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "BKSY", "value": 1, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PL", "value": 1, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "AIXA", "value": 2, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AEHR", "value": 1, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMS", "value": 1, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "MU", "value": 1, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SNDK", "value": 1, "width": 1}, {"from": "IQE", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "FN", "value": 1, "width": 1}, {"from": "TSEM", "title": "\u95dc\u806f\u5f37\u5ea6: 8", "to": "COHR", "value": 8, "width": 1}, {"from": "TSEM", "title": "\u95dc\u806f\u5f37\u5ea6: 4", "to": "MTSI", "value": 4, "width": 1}, {"from": "TSEM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "BKSY", "value": 1, "width": 1}, {"from": "TSEM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PL", "value": 1, "width": 1}, {"from": "TSEM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "TSEM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "POET", "value": 1, "width": 1}, {"from": "TSEM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "TSEM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "TSEM", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AEHR", "value": 1, "width": 1}, {"from": "LMT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "BA", "value": 1, "width": 1}, {"from": "LMT", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "NOC", "value": 2, "width": 1}, {"from": "LMT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AVAV", "value": 1, "width": 1}, {"from": "LMT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "XLE", "value": 1, "width": 1}, {"from": "LMT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LASR", "value": 1, "width": 1}, {"from": "LMT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RTX", "value": 1, "width": 1}, {"from": "LMT", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LPTH", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 6", "to": "MTSI", "value": 6, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "BKSY", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PL", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SIVEF", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AMZN", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "GOOGL", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "POET", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMS", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "MU", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SNDK", "value": 1, "width": 1}, {"from": "COHR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "FN", "value": 1, "width": 1}, {"from": "MTSI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "BKSY", "value": 1, "width": 1}, {"from": "MTSI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PL", "value": 1, "width": 1}, {"from": "MTSI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "MTSI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "POET", "value": 1, "width": 1}, {"from": "MTSI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "MTSI", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "GOOGL", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "AMZN", "value": 3, "width": 1}, {"from": "GOOGL", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "SIVEF", "value": 2, "width": 1}, {"from": "GOOGL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "FN", "value": 1, "width": 1}, {"from": "AMZN", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "ORCL", "value": 2, "width": 1}, {"from": "AMZN", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "AMZN", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SIVEF", "value": 1, "width": 1}, {"from": "TTMI", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "SANM", "value": 2, "width": 1}, {"from": "AVAV", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "XLE", "value": 1, "width": 1}, {"from": "AVAV", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LASR", "value": 1, "width": 1}, {"from": "AVAV", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NOC", "value": 1, "width": 1}, {"from": "AVAV", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RTX", "value": 1, "width": 1}, {"from": "AVAV", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LPTH", "value": 1, "width": 1}, {"from": "SNDK", "title": "\u95dc\u806f\u5f37\u5ea6: 8", "to": "MU", "value": 8, "width": 1}, {"from": "SNDK", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AEHR", "value": 1, "width": 1}, {"from": "SNDK", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMS", "value": 1, "width": 1}, {"from": "MU", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AEHR", "value": 1, "width": 1}, {"from": "MU", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "HIMS", "value": 1, "width": 1}, {"from": "MU", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "ORCL", "value": 1, "width": 1}, {"from": "TSLA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "POET", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "POET", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "AMD", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "INTC", "value": 1, "width": 1}, {"from": "AMD", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "ORCL", "value": 1, "width": 1}, {"from": "AMD", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "KRKNF", "value": 1, "width": 1}, {"from": "AMD", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PLTR", "value": 1, "width": 1}, {"from": "AMD", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "INTC", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "BKSY", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PL", "value": 1, "width": 1}, {"from": "BKSY", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "BKSY", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "LPTH", "value": 2, "width": 1}, {"from": "BKSY", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "LASR", "value": 2, "width": 1}, {"from": "PL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "SPIR", "value": 1, "width": 1}, {"from": "PL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RKLB", "value": 1, "width": 1}, {"from": "SPIR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "ORCL", "value": 1, "width": 1}, {"from": "SPIR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "KRKNF", "value": 1, "width": 1}, {"from": "SPIR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PLTR", "value": 1, "width": 1}, {"from": "BA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "RTX", "value": 1, "width": 1}, {"from": "BA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NOC", "value": 1, "width": 1}, {"from": "RTX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "XLE", "value": 1, "width": 1}, {"from": "RTX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LASR", "value": 1, "width": 1}, {"from": "RTX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NOC", "value": 1, "width": 1}, {"from": "RTX", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LPTH", "value": 1, "width": 1}, {"from": "ORCL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "KRKNF", "value": 1, "width": 1}, {"from": "ORCL", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PLTR", "value": 1, "width": 1}, {"from": "AIXA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "CIEN", "value": 1, "width": 1}, {"from": "AIXA", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AEHR", "value": 1, "width": 1}, {"from": "RKLB", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "LASR", "value": 1, "width": 1}, {"from": "CIEN", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "AEHR", "value": 1, "width": 1}, {"from": "KRKNF", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "PLTR", "value": 1, "width": 1}, {"from": "KRKNF", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "OPTT", "value": 2, "width": 1}, {"from": "KRKNF", "title": "\u95dc\u806f\u5f37\u5ea6: 5", "to": "CODA", "value": 5, "width": 1}, {"from": "OPTT", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "CODA", "value": 2, "width": 1}, {"from": "HIMS", "title": "\u95dc\u806f\u5f37\u5ea6: 4", "to": "NVO", "value": 4, "width": 1}, {"from": "LPTH", "title": "\u95dc\u806f\u5f37\u5ea6: 3", "to": "LASR", "value": 3, "width": 1}, {"from": "LPTH", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "XLE", "value": 1, "width": 1}, {"from": "LPTH", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NOC", "value": 1, "width": 1}, {"from": "LASR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "XLE", "value": 1, "width": 1}, {"from": "LASR", "title": "\u95dc\u806f\u5f37\u5ea6: 1", "to": "NOC", "value": 1, "width": 1}, {"from": "NOC", "title": "\u95dc\u806f\u5f37\u5ea6: 2", "to": "XLE", "value": 2, "width": 1}]);
+
+                  nodeColors = {};
+                  allNodes = nodes.get({ returnType: "Object" });
+                  for (nodeId in allNodes) {
+                    nodeColors[nodeId] = allNodes[nodeId].color;
+                  }
+                  allEdges = edges.get({ returnType: "Object" });
+                  // adding nodes and edges to the graph
+                  data = {nodes: nodes, edges: edges};
+
+                  var options = {"physics": {"forceAtlas2Based": {"gravitationalConstant": -50, "centralGravity": 0.01, "springLength": 100, "springConstant": 0.08}, "maxVelocity": 50, "solver": "forceAtlas2Based", "timestep": 0.35, "stabilization": {"iterations": 150}}};
+
+                  
+
+
+                  
+
+                  network = new vis.Network(container, data, options);
+
+                  
+
+                  
+
+                  
+
+
+                  
+
+                  return network;
+
+              }
+              drawGraph();
+        </script>
+    </body>
+</html>
