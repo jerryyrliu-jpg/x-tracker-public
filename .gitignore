@@ -1,0 +1,17 @@
+# Secrets
+config.env
+*.env
+
+# State & data
+*_state.json
+tweets.db
+accounts.db
+images/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Temp
+/tmp/

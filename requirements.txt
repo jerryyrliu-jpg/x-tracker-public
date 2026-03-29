@@ -1,0 +1,8 @@
+twscrape
+httpx
+streamlit
+yfinance
+plotly
+pandas
+python-dotenv
+pyyaml
