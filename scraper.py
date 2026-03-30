@@ -48,8 +48,12 @@ def load_account_config(account_name: str) -> dict:
     return cfg
 
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
+def init_db(db_path=None):
+    """Create tables if not exist. db_path=None uses module-level DB_PATH (backward compatible)."""
+    path = db_path or DB_PATH
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS tweets (
             id TEXT PRIMARY KEY,
@@ -58,6 +62,13 @@ def init_db():
             text TEXT,
             images TEXT,
             scraped_at TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS query_cache (
+            topic TEXT PRIMARY KEY,
+            result_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         )
     """)
     try:
