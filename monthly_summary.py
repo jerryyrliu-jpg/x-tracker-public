@@ -4,30 +4,17 @@ import sys
 import os
 import subprocess
 import argparse
-import httpx
 import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import yaml
+from utils import load_account_config, send_discord
 
 SCRAPER_BASE = Path(os.getcwd())
 load_dotenv(SCRAPER_BASE / ".env")
 DB_PATH = SCRAPER_BASE / "tweets.db"
 
-
-def load_account_config(account_name: str) -> dict:
-    with open(SCRAPER_BASE / "accounts.yaml") as f:
-        data = yaml.safe_load(f)
-    accounts = data.get("accounts", {})
-    if account_name not in accounts:
-        available = list(accounts.keys())
-        print(f"Error: account '{account_name}' not found. Available: {available}")
-        sys.exit(1)
-    cfg = accounts[account_name]
-    cfg["username"] = account_name
-    cfg["discord_webhook"] = os.environ.get(cfg.get("discord_webhook_env", ""), "")
-    return cfg
 
 
 def get_tweets(account: str, days: int):
@@ -77,24 +64,6 @@ def generate_summary(account_cfg: dict, tweets_text: str):
     except Exception as e:
         print(f"Error calling gemini: {e}")
         return None
-
-async def send_discord(webhook: str, content: str):
-    if not webhook:
-        print("Discord Webhook not set, skip.")
-        return
-    async with httpx.AsyncClient() as client:
-        chunks = []
-        while len(content) > 1900:
-            idx = content.rfind("\n", 0, 1900)
-            if idx == -1:
-                idx = 1900
-            chunks.append(content[:idx])
-            content = content[idx:].strip()
-        chunks.append(content)
-        for chunk in chunks:
-            if chunk:
-                await client.post(webhook, json={"content": chunk})
-                await asyncio.sleep(1)
 
 
 async def main():

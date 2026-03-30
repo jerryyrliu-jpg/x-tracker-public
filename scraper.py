@@ -17,9 +17,9 @@ from pathlib import Path
 from datetime import datetime
 
 import httpx
-import yaml
 from dotenv import load_dotenv
 from twscrape import API
+from utils import load_account_config, send_discord
 
 SCRAPER_BASE = Path(os.getcwd())
 load_dotenv(SCRAPER_BASE / ".env")
@@ -32,20 +32,6 @@ X_PASSWORD = os.environ.get("X_ACCOUNT_PASSWORD", "")
 X_EMAIL = os.environ.get("X_ACCOUNT_EMAIL", "")
 X_EMAIL_PASSWORD = os.environ.get("X_ACCOUNT_EMAIL_PASSWORD", "")
 
-
-def load_account_config(account_name: str) -> dict:
-    config_path = SCRAPER_BASE / "accounts.yaml"
-    with open(config_path) as f:
-        data = yaml.safe_load(f)
-    accounts = data.get("accounts", {})
-    if account_name not in accounts:
-        print(f"Error: account '{account_name}' not found in accounts.yaml")
-        print(f"Available: {list(accounts.keys())}")
-        sys.exit(1)
-    cfg = accounts[account_name]
-    cfg["username"] = account_name
-    cfg["discord_webhook"] = os.environ.get(cfg.get("discord_webhook_env", ""), "")
-    return cfg
 
 
 def init_db(db_path=None):
@@ -113,28 +99,6 @@ async def download_image(url: str, path: Path):
     return str(path)
 
 
-async def send_discord(webhook: str, text: str, image_paths: list[str], tweet_url: str):
-    if not webhook:
-        print("  [skip] Discord webhook not configured")
-        return
-    content = f"{text}\n{tweet_url}"
-    async with httpx.AsyncClient() as client:
-        if image_paths:
-            opened = []
-            try:
-                files = {}
-                for i, p in enumerate(image_paths[:4]):
-                    f = open(p, "rb")
-                    opened.append(f)
-                    files[f"file{i}"] = (Path(p).name, f, "image/jpeg")
-                files["payload_json"] = (None, json.dumps({"content": content}), "application/json")
-                await client.post(webhook, files=files)
-            finally:
-                for f in opened:
-                    f.close()
-        else:
-            await client.post(webhook, json={"content": content})
-
 
 async def run(account_cfg: dict, dry_run: bool = False):
     account = account_cfg["username"]
@@ -190,7 +154,7 @@ async def run(account_cfg: dict, dry_run: bool = False):
         if dry_run:
             print(f"  [dry-run] {date_str}: {tweet.rawContent[:80]}...")
         else:
-            await send_discord(webhook, text, image_paths, tweet_url)
+            await send_discord(webhook, f"{text}\n{tweet_url}", image_paths)
             await asyncio.sleep(1)
 
     sync_fts(conn)

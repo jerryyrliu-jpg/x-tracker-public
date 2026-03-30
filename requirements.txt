@@ -6,3 +6,5 @@ plotly
 pandas
 python-dotenv
 pyyaml
+discord.py
+pytest
