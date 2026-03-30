@@ -1,20 +1,18 @@
 ---
-title: X 爬蟲計劃 — @aleabitoreddit (v3.0 Production Ready)
+title: X 爬蟲計劃 — @aleabitoreddit (v3.2 Production Ready)
 date: 2026-03-25
 updated: 2026-03-30
-tags: [decision, graph, discord-bot, caching, playwright, automated]
-status: complete
+tags: [decision, connected-mode, playwright, automated]
+status: stable-v3.2
 ---
 
-# X 爬蟲計劃 (Serenity) v3.0 實作總結
+# X 爬蟲計劃 (Serenity) v3.2 實作總結
 
-## 1. 核心架構 (v3.0)
-- **Scraper Engine**: 基於 Playwright CDP 模式，模擬真人捲動抓取。
-- **Automated Detection**: 透過 monitor_rss.py 實現新文自動觸發。
-- **AI Intelligence**: 整合 Gemini 3.1 Pro (月報) 與 2.5 Flash Lite (即時分析)。
-- **Knowledge Base**: SQLite + FTS5 全文搜尋 + 智慧快取機制。
+## 1. 核心架構 (v3.2 Stable)
+- **Connected Mode**: 透過 connect_over_cdp (9222 埠) 連接真實瀏覽器，徹底繞過 X 的自動化防禦與快取延遲問題。
+- **Reliable Detection**: 透過 monitor_rss.py 自動觸發連線抓取，確保 100% 抓到最新推文。
+- **Sync Workflow**: 新文自動存入 SQLite 並即時推送到 Discord。
 
-## 2. 視覺化與互動
-- **Dashboard**: 互動式 K 線圖與多空情感標注。
-- **Stock Graph**: 基於 Ticker 共現分析的供應鏈關係圖譜。
-- **Discord Bot**: 支援 $TICKER 即時分析與 /stats 統計。
+## 2. 操作建議
+- **保持瀏覽器開啟**: 確保 Chrome 帶著 --remote-debugging-port 在後台執行。
+- **自動化**: 已設定為背景守護進程。
