@@ -83,11 +83,7 @@ def init_db(db_path=None):
 
 
 def sync_fts(conn):
-    conn.execute("""
-        INSERT INTO tweets_fts(rowid, text)
-        SELECT rowid, text FROM tweets
-        WHERE rowid NOT IN (SELECT rowid FROM tweets_fts)
-    """)
+    conn.execute("INSERT INTO tweets_fts(tweets_fts) VALUES('rebuild')")
     conn.commit()
 
 
