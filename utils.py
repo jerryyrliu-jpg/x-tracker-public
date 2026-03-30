@@ -1,7 +1,8 @@
 """Shared utilities for X-tracker modules."""
-import asyncio, json, os, sqlite3, sys
+import asyncio, json, os, sqlite3, sys, time, logging
 from pathlib import Path
 from typing import Optional
+from logging.handlers import RotatingFileHandler
 
 import httpx
 import yaml
@@ -10,6 +11,81 @@ from dotenv import load_dotenv
 _DEFAULT_BASE = Path(__file__).parent
 load_dotenv(_DEFAULT_BASE / ".env")
 
+def setup_logger(name: str, log_file: str, level=logging.INFO):
+    """Setup a rotating logger."""
+    handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    if not logger.handlers:
+        logger.addHandler(handler)
+        # Also log to console
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+    return logger
+
+class PIDLock:
+    """Atomic PID Lock with stale process cleanup."""
+    def __init__(self, lock_file: str, timeout_mins: int = 20):
+        self.lock_path = Path(lock_file)
+        self.timeout_mins = timeout_mins
+
+    def acquire(self) -> bool:
+        if self.lock_path.exists():
+            try:
+                pid = int(self.lock_path.read_text().strip())
+                # Check if process is still alive
+                os.kill(pid, 0)
+                
+                # Check if it's a stale lock (older than timeout_mins)
+                mtime = self.lock_path.stat().st_mtime
+                if (time.time() - mtime) > (self.timeout_mins * 60):
+                    print(f"⚠️ Stale lock found (PID {pid}, >{self.timeout_mins}m). Killing stale process...")
+                    try:
+                        os.kill(pid, 9)
+                    except: pass
+                    self.lock_path.unlink()
+                else:
+                    return False
+            except (ProcessLookupError, ValueError):
+                # PID not found or file corrupted, safe to remove
+                self.lock_path.unlink()
+            except Exception as e:
+                print(f"❌ Lock Error: {e}")
+                return False
+
+        # Create new lock
+        self.lock_path.write_text(str(os.getpid()))
+        return True
+
+    def release(self):
+        if self.lock_path.exists():
+            self.lock_path.unlink()
+
+class Metrics:
+    """Simple metrics tracker."""
+    def __init__(self, metrics_file: str):
+        self.path = Path(metrics_file)
+        self.data = self._load()
+
+    def _load(self):
+        if self.path.exists():
+            try: return json.loads(self.path.read_text())
+            except: pass
+        return {"success": 0, "fail": 0, "total_runtime": 0, "avg_runtime": 0, "last_reset": time.time()}
+
+    def report(self, success: bool, runtime: float):
+        self.data["success" if success else "fail"] += 1
+        total_runs = self.data["success"] + self.data["fail"]
+        self.data["total_runtime"] += runtime
+        self.data["avg_runtime"] = self.data["total_runtime"] / total_runs
+        self.path.write_text(json.dumps(self.data))
+
+    def get_summary(self):
+        return self.data
 
 def load_account_config(account_name: str, base_path: Path = _DEFAULT_BASE) -> dict:
     """Load account config from accounts.yaml. sys.exit(1) if account not found."""
@@ -19,57 +95,19 @@ def load_account_config(account_name: str, base_path: Path = _DEFAULT_BASE) -> d
     accounts = data.get("accounts", {})
     if account_name not in accounts:
         print(f"Error: account '{account_name}' not found in accounts.yaml")
-        print(f"Available: {list(accounts.keys())}")
         sys.exit(1)
     cfg = accounts[account_name]
     cfg["username"] = account_name
     cfg["discord_webhook"] = os.environ.get(cfg.get("discord_webhook_env", ""), "")
     return cfg
 
-
 def get_db_conn(db_path) -> sqlite3.Connection:
-    """Open SQLite connection with WAL mode and row_factory=Row."""
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
-
-async def send_discord(
-    webhook: str,
-    content: str,
-    image_paths: Optional[list] = None,
-) -> None:
-    """Send message to Discord webhook. Chunks at 1900 chars. Supports file attachments."""
-    if not webhook:
-        print("  [skip] Discord webhook not configured")
-        return
-
+async def send_discord(webhook: str, content: str) -> None:
+    if not webhook: return
     async with httpx.AsyncClient() as client:
-        if image_paths:
-            opened = []
-            try:
-                files = {}
-                for i, p in enumerate(image_paths[:4]):
-                    f = open(p, "rb")
-                    opened.append(f)
-                    files[f"file{i}"] = (Path(p).name, f, "image/jpeg")
-                files["payload_json"] = (None, json.dumps({"content": content}), "application/json")
-                await client.post(webhook, files=files)
-            finally:
-                for f in opened:
-                    f.close()
-        else:
-            chunks: list[str] = []
-            remaining = content
-            while len(remaining) > 1900:
-                idx = remaining.rfind("\n", 0, 1900)
-                if idx == -1:
-                    idx = 1900
-                chunks.append(remaining[:idx])
-                remaining = remaining[idx:].strip()
-            chunks.append(remaining)
-            for chunk in chunks:
-                if chunk:
-                    await client.post(webhook, json={"content": chunk})
-                    await asyncio.sleep(1)
+        await client.post(webhook, json={"content": content})
