@@ -62,29 +62,31 @@ def analyze_topic_weighted(topic, tweets):
     return res.stdout
 
 
-def get_cache(topic, days=3, conn=None):
-    """Retrieve cached result. Creates its own conn if none provided."""
+def get_cache(topic, account="aleabitoreddit", days=3, conn=None):
+    """Retrieve cached result. Cache key is account:topic:days."""
     should_close = conn is None
     if conn is None:
         conn = get_db_conn(DB_PATH)
+    cache_key = f"{account}:{topic}:{days}"
     cutoff = (datetime.now() - timedelta(days=days)).isoformat()
     row = conn.execute(
         "SELECT result_json FROM query_cache WHERE topic = ? AND updated_at >= ?",
-        (topic, cutoff),
+        (cache_key, cutoff),
     ).fetchone()
     if should_close:
         conn.close()
     return json.loads(row[0]) if row else None
 
 
-def save_cache(topic, result_data, conn=None):
-    """Save result to cache. Creates its own conn if none provided."""
+def save_cache(topic, result_data, account="aleabitoreddit", days=30, conn=None):
+    """Save result to cache. Cache key is account:topic:days."""
     should_close = conn is None
     if conn is None:
         conn = get_db_conn(DB_PATH)
+    cache_key = f"{account}:{topic}:{days}"
     conn.execute(
         "INSERT OR REPLACE INTO query_cache (topic, result_json, updated_at) VALUES (?, ?, ?)",
-        (topic, json.dumps(result_data), datetime.now().isoformat()),
+        (cache_key, json.dumps(result_data), datetime.now().isoformat()),
     )
     conn.commit()
     if should_close:
@@ -104,7 +106,7 @@ def main():
     try:
         # Check cache first (before FTS sync for speed on hits)
         if not args.force:
-            cached = get_cache(args.topic, conn=conn)
+            cached = get_cache(args.topic, account=args.account, days=args.days, conn=conn)
             if cached:
                 print(f"[Cache Hit] 讀取 {args.topic} 的快取數據。")
                 if args.output:
@@ -153,7 +155,7 @@ def main():
         "cached": False,
     }
 
-    save_cache(args.topic, result_data)
+    save_cache(args.topic, result_data, account=args.account, days=args.days)
     if args.output:
         with open(args.output, "w") as f:
             json.dump(result_data, f)
