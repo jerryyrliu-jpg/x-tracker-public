@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 import yaml
 from utils import load_account_config, send_discord
 
-SCRAPER_BASE = Path(os.getcwd())
+SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
 DB_PATH = SCRAPER_BASE / "tweets.db"
 

@@ -11,7 +11,7 @@ except ImportError:
     sys.exit(1)
 
 
-SCRAPER_BASE = Path(os.getcwd())
+SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
 DB_PATH = SCRAPER_BASE / "tweets.db"
 
