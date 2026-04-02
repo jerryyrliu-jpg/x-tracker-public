@@ -40,11 +40,13 @@ async def on_ready():
 @bot.command()
 async def stats(ctx):
     conn = get_db_conn(SCRAPER_BASE / "tweets.db")
-    total = conn.execute("SELECT COUNT(*) FROM tweets").fetchone()[0]
-    rows = conn.execute(
-        "SELECT account, COUNT(*), MAX(scraped_at) FROM tweets GROUP BY account"
-    ).fetchall()
-    conn.close()
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM tweets").fetchone()[0]
+        rows = conn.execute(
+            "SELECT account, COUNT(*), MAX(scraped_at) FROM tweets GROUP BY account"
+        ).fetchall()
+    finally:
+        conn.close()
     lines = [f"📊 **X-Tracker Stats** — 共 {total} 則推文"]
     for account, count, last_scraped in rows:
         ts = last_scraped[:16].replace("T", " ") if last_scraped else "—"
@@ -80,19 +82,19 @@ async def on_message(message):
                 )
                 stdout, stderr = await proc.communicate()
 
-            if proc.returncode == 0 and os.path.exists(out_file):
-                try:
-                    with open(out_file) as f:
-                        res = json.load(f)
-                    summary = res["summary"]
-                    for i in range(0, len(summary), 1900):
-                        await message.channel.send(summary[i : i + 1900])
-                finally:
-                    os.unlink(out_file)
-            else:
-                if stderr:
-                    print(f"Error analyzing {ticker}: {stderr.decode()}")
-                await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
+                if proc.returncode == 0 and os.path.exists(out_file):
+                    try:
+                        with open(out_file) as f:
+                            res = json.load(f)
+                        summary = res["summary"]
+                        for i in range(0, len(summary), 1900):
+                            await message.channel.send(summary[i : i + 1900])
+                    finally:
+                        os.unlink(out_file)
+                else:
+                    if stderr:
+                        print(f"Error analyzing {ticker}: {stderr.decode()}")
+                    await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 
 bot.run(TOKEN)
