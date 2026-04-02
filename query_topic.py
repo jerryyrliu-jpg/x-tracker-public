@@ -41,19 +41,50 @@ def search_tweets_fts(conn, account: str, topic: str, days: int) -> list:
         return rows
 
 
-def analyze_topic_weighted(topic, tweets):
-    """Analyze tweets with Gemini. Returns raw stdout including ---SENTIMENT_JSON--- block."""
-    tweet_list = [{"id": r[0], "date": r[1], "text": r[2]} for r in tweets]
-    example_id = tweet_list[0]["id"] if tweet_list else "1234567890"
-    prompt = (
-        f"分析「{topic}」推文。以最新推文為準，觀察觀點演變。繁體中文總結。\n"
-        f"數據：{json.dumps(tweet_list, ensure_ascii=False)}\n\n"
+def build_prompt(topic: str, tweets: list) -> str:
+    """Build the Gemini analysis prompt with date context and weekly grouping."""
+    from collections import defaultdict
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # Group tweets by ISO week
+    weeks: dict = defaultdict(list)
+    ungrouped = []
+    for r in tweets:
+        tid, created_at, text = r[0], r[1], r[2]
+        entry = {"id": tid, "date": created_at[:10], "text": text}
+        try:
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            week_label = f"{dt.isocalendar().year}-W{dt.isocalendar().week:02d}"
+            weeks[week_label].append(entry)
+        except Exception:
+            ungrouped.append(entry)
+
+    grouped_json: dict = {}
+    for week in sorted(weeks):
+        grouped_json[week] = weeks[week]
+    if ungrouped:
+        grouped_json["other"] = ungrouped
+
+    example_id = tweets[0][0] if tweets else "1234567890"
+    return (
+        f"今日：{today}\n\n"
+        f"分析「{topic}」的推文，以時間順序觀察觀點演變與趨勢轉折。繁體中文總結。\n"
+        f"數據（依週分組）：{json.dumps(grouped_json, ensure_ascii=False)}\n\n"
+        "請：\n"
+        "1. 總結各週的主要觀點。\n"
+        "2. 明確指出是否有趨勢方向轉變（例如從看多轉為謹慎）。\n"
+        "3. 以最新推文為準給出當前立場。\n\n"
         "請在回答最後加上以下分隔符，並輸出每則推文 id 對應的情感標籤 JSON。\n"
         "情感值只能是 Bullish、Bearish 或 Neutral 其中之一。\n"
         "格式範例（請替換為實際的 tweet id）：\n"
         "---SENTIMENT_JSON---\n"
         f'{{"{example_id}": "Bullish", "<其他id>": "Bearish"}}'
     )
+
+
+def analyze_topic_weighted(topic, tweets):
+    """Analyze tweets with Gemini. Returns raw stdout including ---SENTIMENT_JSON--- block."""
+    prompt = build_prompt(topic, tweets)
     cmd = ["gemini", "--model", "gemini-2.5-flash-lite", "-p", prompt]
     res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=120)
     if res.returncode != 0:
