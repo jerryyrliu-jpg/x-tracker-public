@@ -1,17 +1,9 @@
-# Secrets
-config.env
-*.env
-
-# State & data
-*_state.json
-tweets.db
-accounts.db
-images/
-
-# Python
+.profiles/
+*.log
+*.lock
+metrics.json
+debug_structure.py
+chrome.log
 __pycache__/
-*.pyc
-.venv/
-
-# Temp
-/tmp/
+.env
+venv/

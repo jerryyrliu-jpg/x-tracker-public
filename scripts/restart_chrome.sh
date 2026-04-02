@@ -1,10 +1,20 @@
 #!/bin/bash
-# X-Tracker v3.4 Self-Healing Script: Restart Chrome CDP
+# X-Tracker v3.4 Self-Healing Script: Restart Chrome (v2 Hardened)
 
 echo "♻️ Restarting Chrome (9222)..."
 pkill -f "Google Chrome"
 sleep 5
-# 開啟帶有遠端偵錯功能且獨立 Profile 的 Chrome
-# 注意: 這裡假設路徑與之前 snapshot 紀錄一致
-open -a "Google Chrome" --args --remote-debugging-port=9222 --user-data-dir="/Users/yj/Desktop/PyProjects/X-tracker/.profiles/x_scraper" --headless
-echo "✅ Chrome restarted in headless mode."
+
+# 強力清理 SingletonLock，防止 CDP 連線拒絕
+find "/Users/yj/Desktop/PyProjects/X-tracker/.profiles/x_scraper" -name "SingletonLock" -delete 2>/dev/null
+
+# 使用 Headless-new 啟動 (Chrome 109+ 推薦)
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+  --remote-debugging-port=9222 \
+  --user-data-dir="/Users/yj/Desktop/PyProjects/X-tracker/.profiles/x_scraper" \
+  --headless=new \
+  --disable-gpu \
+  --remote-allow-origins="*" > /Users/yj/Desktop/PyProjects/X-tracker/chrome.log 2>&1 &
+
+sleep 5
+echo "✅ Chrome restarted with SingletonLock cleanup."
