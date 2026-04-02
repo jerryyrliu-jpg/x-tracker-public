@@ -78,13 +78,12 @@ def sync_fts(conn):
 def migrate_fts_tokenizer(conn):
     """Migrate existing tweets_fts to porter tokenizer if needed.
 
-    Safe to call multiple times — checks tokenizer config before acting.
+    Safe to call multiple times — checks sqlite_master DDL before acting.
     """
     row = conn.execute(
-        "SELECT v FROM tweets_fts_config WHERE k = 'tokenize'"
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tweets_fts'"
     ).fetchone()
-    current = row[0] if row else "unicode61"
-    if "porter" in current:
+    if row and "porter" in (row[0] or ""):
         return  # already migrated
     print("Migrating FTS5 tokenizer to porter unicode61...")
     conn.execute("DROP TABLE IF EXISTS tweets_fts")
