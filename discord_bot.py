@@ -2,8 +2,10 @@ import asyncio, discord, json, os, re, sys
 from discord.ext import commands
 from dotenv import load_dotenv
 from pathlib import Path
+from utils import get_db_conn
 
 TICKER_RE = re.compile(r'^[A-Z0-9.\-]{1,10}$')
+DAYS_RE = re.compile(r'\bdays:(\S+)\b', re.IGNORECASE)
 
 SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
@@ -14,6 +16,22 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 
+def parse_ticker_message(raw: str) -> tuple[str, int]:
+    """Extract ticker and optional days:N from a message string.
+
+    Returns (ticker_upper, days) where days defaults to 30 and caps at 90.
+    days:N is stripped before ticker validation.
+    """
+    days = 30
+    m = DAYS_RE.search(raw)
+    if m:
+        val = m.group(1)
+        if val.isdigit():
+            days = min(int(val), 90)
+        raw = DAYS_RE.sub("", raw)
+    return raw.strip().upper(), days
+
+
 @bot.event
 async def on_ready():
     print(f"Bot is ready! Logged in as {bot.user}")
@@ -21,11 +39,17 @@ async def on_ready():
 
 @bot.command()
 async def stats(ctx):
-    import sqlite3
-    conn = sqlite3.connect(SCRAPER_BASE / "tweets.db")
-    count = conn.execute("SELECT COUNT(*) FROM tweets").fetchone()[0]
+    conn = get_db_conn(SCRAPER_BASE / "tweets.db")
+    total = conn.execute("SELECT COUNT(*) FROM tweets").fetchone()[0]
+    rows = conn.execute(
+        "SELECT account, COUNT(*), MAX(scraped_at) FROM tweets GROUP BY account"
+    ).fetchall()
     conn.close()
-    await ctx.send(f"目前資料庫共有 {count} 則推文。")
+    lines = [f"📊 **X-Tracker Stats** — 共 {total} 則推文"]
+    for account, count, last_scraped in rows:
+        ts = last_scraped[:16].replace("T", " ") if last_scraped else "—"
+        lines.append(f"  • @{account}: {count} 則 · 最後抓取 {ts}")
+    await ctx.send("\n".join(lines))
 
 
 @bot.event
@@ -34,20 +58,27 @@ async def on_message(message):
         return
     await bot.process_commands(message)
     if message.content.startswith("$"):
-        ticker = message.content[1:].upper().strip()
+        raw = message.content[1:].strip()
+        ticker, days = parse_ticker_message(raw)
         if TICKER_RE.match(ticker):
             safe_ticker = re.sub(r'[^A-Z0-9]', '_', ticker)
-            await message.channel.send(f"正在分析 {ticker}...")
             out_file = f"/tmp/bot_{safe_ticker}.json"
-            cmd = [sys.executable, str(SCRAPER_BASE / "query_topic.py"), ticker, "--output", out_file]
+            cmd = [
+                sys.executable,
+                str(SCRAPER_BASE / "query_topic.py"),
+                ticker,
+                "--days", str(days),
+                "--output", out_file,
+            ]
 
-            # Non-blocking: does not freeze the Discord event loop
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate()
+            async with message.channel.typing():
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(SCRAPER_BASE),
+                )
+                stdout, stderr = await proc.communicate()
 
             if proc.returncode == 0 and os.path.exists(out_file):
                 try:
