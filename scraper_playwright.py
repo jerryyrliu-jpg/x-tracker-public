@@ -116,8 +116,11 @@ async def scrape():
                     continue
             
             conn.commit()
+            if new_count > 0:
+                conn.execute("INSERT INTO tweets_fts(tweets_fts) VALUES('rebuild')")
+                conn.commit()
             conn.close()
-            
+
             result["status"] = "success"
             result["new_count"] = new_count
             await page.close()
