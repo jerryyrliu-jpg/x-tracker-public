@@ -62,8 +62,9 @@ def analyze_topic_weighted(topic, tweets):
     return res.stdout
 
 
-def get_cache(topic, account="aleabitoreddit", days=3, conn=None):
-    """Retrieve cached result. Cache key is account:topic:days."""
+def get_cache(topic, account="aleabitoreddit", days=30, conn=None):
+    """Retrieve cached result. Cache key is account:topic:days.
+    Also used as freshness window: entries older than `days` days are ignored."""
     should_close = conn is None
     if conn is None:
         conn = get_db_conn(DB_PATH)
