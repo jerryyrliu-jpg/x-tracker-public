@@ -1,4 +1,5 @@
 import sqlite3, json, sys, os, subprocess, argparse, re
+from collections import defaultdict
 from pathlib import Path
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -43,7 +44,6 @@ def search_tweets_fts(conn, account: str, topic: str, days: int) -> list:
 
 def build_prompt(topic: str, tweets: list) -> str:
     """Build the Gemini analysis prompt with date context and weekly grouping."""
-    from collections import defaultdict
     today = datetime.now().strftime("%Y-%m-%d")
 
     # Group tweets by ISO week
