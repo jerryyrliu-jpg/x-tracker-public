@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import sqlite3
 import re
 import httpx
 import sys
@@ -11,9 +10,9 @@ from pathlib import Path
 from datetime import datetime
 from playwright.async_api import async_playwright
 from dotenv import load_dotenv
+from utils import get_db_conn
 
-# 使用絕對路徑確保在不同目錄下執行皆正常
-SCRAPER_BASE = Path("/Users/yj/Desktop/PyProjects/X-tracker")
+SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
 
 DB_PATH = SCRAPER_BASE / "tweets.db"
@@ -84,42 +83,44 @@ async def scrape():
             await asyncio.sleep(random.uniform(1.0, 2.0))
             
             articles = await page.query_selector_all("article[data-testid='tweet']")
-            
-            conn = sqlite3.connect(DB_PATH)
+
+            conn = get_db_conn(DB_PATH)
             new_count = 0
-            
-            for t in articles[:10]:
-                try:
-                    link_el = await t.query_selector("a[href*='/status/']")
-                    if not link_el: continue
-                    href = await link_el.get_attribute("href")
-                    tid_match = re.search(r"/status/(\d+)", href)
-                    if not tid_match: continue
-                    tid = tid_match.group(1)
-                    
-                    txt_el = await t.query_selector("[data-testid='tweetText']")
-                    txt = await txt_el.inner_text() if txt_el else ""
-                    
-                    time_el = await t.query_selector("time")
-                    tm = await time_el.get_attribute("datetime") if time_el else datetime.now().isoformat()
-                    
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "INSERT OR IGNORE INTO tweets (id, account, created_at, text, images, scraped_at) VALUES (?,?,?,?,?,?)",
-                        (tid, ACCOUNT, tm, txt, "[]", datetime.now().isoformat())
-                    )
-                    
-                    if cursor.rowcount > 0:
-                        new_count += 1
-                        await post_to_discord({"id": tid, "text": txt, "time": tm})
-                except Exception:
-                    continue
-            
-            conn.commit()
-            if new_count > 0:
-                conn.execute("INSERT INTO tweets_fts(tweets_fts) VALUES('rebuild')")
+            try:
+                for t in articles[:10]:
+                    try:
+                        link_el = await t.query_selector("a[href*='/status/']")
+                        if not link_el: continue
+                        href = await link_el.get_attribute("href")
+                        tid_match = re.search(r"/status/(\d+)", href)
+                        if not tid_match: continue
+                        tid = tid_match.group(1)
+
+                        txt_el = await t.query_selector("[data-testid='tweetText']")
+                        txt = await txt_el.inner_text() if txt_el else ""
+
+                        time_el = await t.query_selector("time")
+                        tm = await time_el.get_attribute("datetime") if time_el else datetime.now().isoformat()
+
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "INSERT OR IGNORE INTO tweets (id, account, created_at, text, images, scraped_at) VALUES (?,?,?,?,?,?)",
+                            (tid, ACCOUNT, tm, txt, "[]", datetime.now().isoformat())
+                        )
+
+                        if cursor.rowcount > 0:
+                            new_count += 1
+                            await post_to_discord({"id": tid, "text": txt, "time": tm})
+                    except Exception as e:
+                        print(f"⚠️ Tweet parse error: {e}", file=sys.stderr)
+                        continue
+
                 conn.commit()
-            conn.close()
+                if new_count > 0:
+                    conn.execute("INSERT INTO tweets_fts(tweets_fts) VALUES('rebuild')")
+                    conn.commit()
+            finally:
+                conn.close()
 
             result["status"] = "success"
             result["new_count"] = new_count

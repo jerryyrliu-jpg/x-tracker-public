@@ -37,10 +37,7 @@ class PIDLock:
         if self.lock_path.exists():
             try:
                 pid = int(self.lock_path.read_text().strip())
-                # Check if process is still alive
                 os.kill(pid, 0)
-                
-                # Check if it's a stale lock (older than timeout_mins)
                 mtime = self.lock_path.stat().st_mtime
                 if (time.time() - mtime) > (self.timeout_mins * 60):
                     print(f"⚠️ Stale lock found (PID {pid}, >{self.timeout_mins}m). Killing stale process...")
@@ -51,15 +48,19 @@ class PIDLock:
                 else:
                     return False
             except (ProcessLookupError, ValueError):
-                # PID not found or file corrupted, safe to remove
                 self.lock_path.unlink()
             except Exception as e:
                 print(f"❌ Lock Error: {e}")
                 return False
 
-        # Create new lock
-        self.lock_path.write_text(str(os.getpid()))
-        return True
+        # Atomic create: fails if another process won the race
+        try:
+            fd = os.open(str(self.lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return True
+        except FileExistsError:
+            return False
 
     def release(self):
         if self.lock_path.exists():
@@ -108,6 +109,10 @@ def get_db_conn(db_path) -> sqlite3.Connection:
     return conn
 
 async def send_discord(webhook: str, content: str) -> None:
-    if not webhook: return
-    async with httpx.AsyncClient() as client:
-        await client.post(webhook, json={"content": content})
+    if not webhook:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(webhook, json={"content": content})
+    except Exception as e:
+        print(f"send_discord failed: {e}", file=sys.stderr)

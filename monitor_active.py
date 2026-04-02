@@ -11,7 +11,7 @@ from datetime import datetime
 from utils import setup_logger, PIDLock, Metrics, send_discord, load_account_config
 
 # 配置
-BASE_PATH = Path("/Users/yj/Desktop/PyProjects/X-tracker")
+BASE_PATH = Path(__file__).resolve().parent
 LOG_FILE = BASE_PATH / "monitor_active.log"
 LOCK_FILE = BASE_PATH / ".x_tracker.lock"
 METRICS_FILE = BASE_PATH / "metrics.json"
@@ -84,20 +84,35 @@ async def main():
                 if fail_count >= 3:
                     logger.warning("🚨 3 consecutive failures. Attempting Self-Healing...")
                     if RESTART_SCRIPT.exists():
-                        subprocess.run(["bash", str(RESTART_SCRIPT)])
-                        logger.info("♻️ Restart script executed.")
-                        await send_discord(DISCORD_WEBHOOK, "♻️ **Self-Healing**: Consecutive failures detected, restarting Chrome...")
-                        fail_count = 0 # Reset count after attempt
+                        try:
+                            proc = await asyncio.create_subprocess_exec(
+                                "bash", str(RESTART_SCRIPT),
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                            )
+                            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+                            if proc.returncode == 0:
+                                logger.info("♻️ Restart script executed successfully.")
+                                await send_discord(DISCORD_WEBHOOK, "♻️ **Self-Healing**: Chrome restarted successfully.")
+                                fail_count = 0
+                            else:
+                                logger.error(f"❌ Restart script failed: {stderr.decode()}")
+                        except asyncio.TimeoutError:
+                            logger.error("❌ Restart script timed out (>60s).")
+                        except Exception as e:
+                            logger.error(f"❌ Restart script error: {e}")
             else:
                 fail_count = 0
             
             # 每 100 次或強制 Debug 時發送心跳報告
             if run_count % 100 == 0 or os.environ.get("DEBUG_HEARTBEAT"):
                 stats = metrics.get_summary()
+                total = stats['success'] + stats['fail']
+                rate = stats['success'] / total if total > 0 else 0.0
                 msg = (f"📈 **X-Tracker Heartbeat**\n"
                        f"Status: `Online`\n"
                        f"Runs: `{run_count}`\n"
-                       f"Success Rate: `{stats['success'] / (stats['success'] + stats['fail']):.1%}`\n"
+                       f"Success Rate: `{rate:.1%}`\n"
                        f"Avg Runtime: `{stats['avg_runtime']:.1f}s`\n"
                        f"Last Run: `{datetime.now().strftime('%H:%M:%S')}`")
                 await send_discord(DISCORD_WEBHOOK, msg)

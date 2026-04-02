@@ -17,6 +17,7 @@ from pathlib import Path
 from datetime import datetime
 
 import httpx
+import yaml
 from dotenv import load_dotenv
 from twscrape import API
 from utils import load_account_config, send_discord

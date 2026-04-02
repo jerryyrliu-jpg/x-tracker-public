@@ -26,7 +26,9 @@ def search_tweets_fts(conn, account: str, topic: str, days: int) -> list:
             "WHERE tweets_fts MATCH ? AND t.account = ? AND t.created_at >= ? "
             "ORDER BY t.created_at DESC"
         )
-        rows = conn.execute(query, (topic, account, since_date)).fetchall()
+        # Strip FTS5 special characters to avoid syntax errors (e.g. BTC-USD → BTC USD)
+        fts_topic = re.sub(r'[^\w\s]', ' ', topic).strip()
+        rows = conn.execute(query, (fts_topic, account, since_date)).fetchall()
         return rows
     except sqlite3.OperationalError as e:
         print(f"FTS5 search failed ({e}), falling back to LIKE search.", file=sys.stderr)
@@ -64,7 +66,7 @@ def get_cache(topic, days=3, conn=None):
     """Retrieve cached result. Creates its own conn if none provided."""
     should_close = conn is None
     if conn is None:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_conn(DB_PATH)
     cutoff = (datetime.now() - timedelta(days=days)).isoformat()
     row = conn.execute(
         "SELECT result_json FROM query_cache WHERE topic = ? AND updated_at >= ?",
@@ -79,7 +81,7 @@ def save_cache(topic, result_data, conn=None):
     """Save result to cache. Creates its own conn if none provided."""
     should_close = conn is None
     if conn is None:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_conn(DB_PATH)
     conn.execute(
         "INSERT OR REPLACE INTO query_cache (topic, result_json, updated_at) VALUES (?, ?, ?)",
         (topic, json.dumps(result_data), datetime.now().isoformat()),
