@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from twscrape import API
 from utils import load_account_config, send_discord
 
-SCRAPER_BASE = Path(os.getcwd())
+SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
 
 DB_PATH = SCRAPER_BASE / "tweets.db"
@@ -66,6 +66,7 @@ def init_db(db_path=None):
         )
     except sqlite3.OperationalError:
         pass
+    migrate_fts_tokenizer(conn)
     conn.commit()
     return conn
 
