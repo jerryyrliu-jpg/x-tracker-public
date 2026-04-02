@@ -61,7 +61,8 @@ def init_db(db_path=None):
     try:
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS tweets_fts "
-            "USING fts5(text, content='tweets', content_rowid='rowid')"
+            "USING fts5(text, content='tweets', content_rowid='rowid', "
+            "tokenize='porter unicode61')"
         )
     except sqlite3.OperationalError:
         pass
@@ -72,6 +73,29 @@ def init_db(db_path=None):
 def sync_fts(conn):
     conn.execute("INSERT INTO tweets_fts(tweets_fts) VALUES('rebuild')")
     conn.commit()
+
+
+def migrate_fts_tokenizer(conn):
+    """Migrate existing tweets_fts to porter tokenizer if needed.
+
+    Safe to call multiple times — checks tokenizer config before acting.
+    """
+    row = conn.execute(
+        "SELECT v FROM tweets_fts_config WHERE k = 'tokenize'"
+    ).fetchone()
+    current = row[0] if row else "unicode61"
+    if "porter" in current:
+        return  # already migrated
+    print("Migrating FTS5 tokenizer to porter unicode61...")
+    conn.execute("DROP TABLE IF EXISTS tweets_fts")
+    conn.execute(
+        "CREATE VIRTUAL TABLE tweets_fts "
+        "USING fts5(text, content='tweets', content_rowid='rowid', "
+        "tokenize='porter unicode61')"
+    )
+    conn.execute("INSERT INTO tweets_fts(tweets_fts) VALUES('rebuild')")
+    conn.commit()
+    print("FTS5 migration complete.")
 
 
 def load_since_id(account: str) -> str | None:
