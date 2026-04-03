@@ -29,14 +29,16 @@ Default N = 7. Supported values: any integer 1–90.
 
 ```
 Discord user: /summary days:3
-    └─ discord_bot.py (@bot.command stats)
-         └─ query_topic.py summarize_recent(account, days)
+    └─ discord_bot.py (@bot.command() "summary")
+         └─ query_topic.py run as subprocess (same pattern as $TICKER)
               ├─ get_cache(key="aleabitoreddit:__summary__:3")  → hit → return
               └─ get_recent_tweets(conn, days=3, account)       → list of rows
                    └─ build_all_tickers_prompt(tweets, days)    → prompt str
                         └─ Gemini CLI subprocess (existing pattern)
-                             └─ save_cache + return summary
+                             └─ save_cache + write summary to --output JSON file
 ```
+
+**Invocation pattern:** `discord_bot.py` spawns `query_topic.py --summary --days 3 --output /tmp/bot___summary__.json` as an async subprocess (identical to the existing `$TICKER` handler). The summary string is returned via the same temp JSON file contract: `{"summary": "...", "cached": false}`. No direct import — keeps DB connection management isolated to the subprocess.
 
 No new files. All changes in `query_topic.py` and `discord_bot.py`.
 
@@ -106,13 +108,15 @@ New `@bot.command()` named `summary`. Parses optional `days:N` argument from the
 |-----------|----------|
 | No tweets in window | `最近 {days} 天無推文資料。` |
 | Gemini call fails | `分析失敗，請稍後再試。` |
-| days out of range (>90) | Clamp to 90 (same as `parse_ticker_message`) |
+| days > 90 | Clamp to 90 (same as `parse_ticker_message`) |
+| days < 1 | Clamp to 1 |
+| Gemini returns empty stdout (returncode=0) | `分析失敗，請稍後再試。` |
 
 ---
 
 ## 6. Caching
 
-Cache key: `aleabitoreddit:__summary__:N` — stored in existing `query_cache` table. No schema change. TTL = N days (same logic as topic queries). Use `--force` equivalent via re-invoke to bypass.
+Cache key: `aleabitoreddit:__summary__:N` — stored in existing `query_cache` table. No schema change. TTL = N days (same logic as topic queries). Each `days` value is an independent cache entry: `/summary days:7` and `/summary days:3` do not share a cache slot. Use `--force` flag to bypass cache.
 
 ---
 
@@ -123,6 +127,7 @@ Cache key: `aleabitoreddit:__summary__:N` — stored in existing `query_cache` t
 - `test_build_all_tickers_prompt_includes_today` — asserts today's date in prompt
 - `test_build_all_tickers_prompt_groups_by_day` — asserts day-level keys in prompt JSON
 - `test_summary_discord_command_parse_days` — unit test `parse_days_from_args("days:3")` → 3
+- `test_summarize_recent_empty_gemini_response` — mock Gemini returning empty stdout with returncode 0; asserts function returns empty string (caller handles gracefully)
 
 ---
 
