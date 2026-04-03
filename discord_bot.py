@@ -70,7 +70,7 @@ async def stats(ctx):
 @bot.command()
 async def summary(ctx, *, args: str = ""):
     days = parse_days_from_args(args)
-    out_file = f"/tmp/bot___summary__{days}.json"
+    out_file = f"/tmp/bot_summary_{days}_{ctx.message.id}.json"
     cmd = [
         sys.executable,
         str(SCRAPER_BASE / "query_topic.py"),
@@ -98,6 +98,9 @@ async def summary(ctx, *, args: str = ""):
                         await ctx.send(summary_text[i : i + 1900])
                 else:
                     await ctx.send("分析失敗，請稍後再試。")
+            except Exception as e:
+                print(f"Error reading /summary output: {e}")
+                await ctx.send("分析失敗，請稍後再試。")
             finally:
                 if os.path.exists(out_file):
                     os.unlink(out_file)
