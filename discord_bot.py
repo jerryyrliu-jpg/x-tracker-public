@@ -32,6 +32,19 @@ def parse_ticker_message(raw: str) -> tuple[str, int]:
     return raw.strip().upper(), days
 
 
+def parse_days_from_args(args_str: str, default: int = 7) -> int:
+    """Parse optional days:N from bot command argument string.
+
+    Returns days (clamped 1–90), defaulting to `default` if absent or invalid.
+    """
+    m = DAYS_RE.search(args_str)
+    if m:
+        val = m.group(1)
+        if val.isdigit():
+            return max(1, min(int(val), 90))
+    return default
+
+
 @bot.event
 async def on_ready():
     print(f"Bot is ready! Logged in as {bot.user}")
@@ -52,6 +65,46 @@ async def stats(ctx):
         ts = last_scraped[:16].replace("T", " ") if last_scraped else "—"
         lines.append(f"  • @{account}: {count} 則 · 最後抓取 {ts}")
     await ctx.send("\n".join(lines))
+
+
+@bot.command()
+async def summary(ctx, *, args: str = ""):
+    days = parse_days_from_args(args)
+    out_file = f"/tmp/bot___summary__{days}.json"
+    cmd = [
+        sys.executable,
+        str(SCRAPER_BASE / "query_topic.py"),
+        "--summary",
+        "--days", str(days),
+        "--output", out_file,
+    ]
+
+    async with ctx.typing():
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(SCRAPER_BASE),
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode == 0 and os.path.exists(out_file):
+            try:
+                with open(out_file, encoding="utf-8") as f:
+                    res = json.load(f)
+                summary_text = res.get("summary", "")
+                if summary_text:
+                    for i in range(0, len(summary_text), 1900):
+                        await ctx.send(summary_text[i : i + 1900])
+                else:
+                    await ctx.send("分析失敗，請稍後再試。")
+            finally:
+                if os.path.exists(out_file):
+                    os.unlink(out_file)
+        else:
+            if stderr:
+                print(f"Error in /summary: {stderr.decode()}")
+            await ctx.send(f"最近 {days} 天無推文資料。")
 
 
 @bot.event

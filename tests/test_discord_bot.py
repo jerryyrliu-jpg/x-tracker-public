@@ -43,3 +43,24 @@ def test_parse_days_suffix_invalid_ignored():
     ticker, days = parse_ticker_message("LITE days:abc")
     assert ticker == "LITE"
     assert days == 30
+
+
+def test_parse_days_from_args_present():
+    from discord_bot import parse_days_from_args
+    assert parse_days_from_args("days:3") == 3
+
+def test_parse_days_from_args_absent():
+    from discord_bot import parse_days_from_args
+    assert parse_days_from_args("") == 7  # default for /summary is 7
+
+def test_parse_days_from_args_clamps_upper():
+    from discord_bot import parse_days_from_args
+    assert parse_days_from_args("days:999") == 90
+
+def test_parse_days_from_args_clamps_lower():
+    from discord_bot import parse_days_from_args
+    assert parse_days_from_args("days:0") == 1
+
+def test_parse_days_from_args_invalid_ignored():
+    from discord_bot import parse_days_from_args
+    assert parse_days_from_args("days:abc") == 7
