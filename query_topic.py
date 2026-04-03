@@ -82,6 +82,73 @@ def build_prompt(topic: str, tweets: list) -> str:
     )
 
 
+def get_recent_tweets(conn, days: int, account: str = "aleabitoreddit") -> list:
+    """Fetch all tweets within the last `days` days for `account`. No topic filter."""
+    since = (datetime.now() - timedelta(days=days)).isoformat()
+    return conn.execute(
+        "SELECT id, created_at, text FROM tweets "
+        "WHERE account = ? AND created_at >= ? ORDER BY created_at DESC",
+        (account, since),
+    ).fetchall()
+
+
+def build_all_tickers_prompt(tweets: list, days: int) -> str:
+    """Build Gemini prompt for all-tickers summary, grouped by day."""
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    day_groups: dict = defaultdict(list)
+    for r in tweets:
+        tid, created_at, text = r[0], r[1], r[2]
+        day_key = created_at[:10]  # YYYY-MM-DD
+        day_groups[day_key].append({"id": tid, "text": text})
+
+    grouped_json: dict = {}
+    for day in sorted(day_groups):
+        grouped_json[day] = day_groups[day]
+
+    return (
+        f"今日：{today}（最近 {days} 天推文分析）\n\n"
+        f"數據（依日分組）：{json.dumps(grouped_json, ensure_ascii=False)}\n\n"
+        "請：\n"
+        "1. 找出所有被提及的標的（股票、加密貨幣等）\n"
+        "2. 每個標的輸出：\n"
+        "   - 情緒：Bullish / Bearish / Neutral\n"
+        "   - 一句主要觀點摘要\n"
+        "3. 若同一標的在不同天有不同立場，請註明轉變\n\n"
+        "繁體中文總結。"
+    )
+
+
+def summarize_recent(account: str = "aleabitoreddit", days: int = 7, force: bool = False) -> str:
+    """Summarize all tickers mentioned in recent tweets. Returns summary string or '' on failure."""
+    cache_topic = "__summary__"
+
+    if not force:
+        cached = get_cache(cache_topic, account=account, days=days)
+        if cached:
+            return cached.get("summary", "")
+
+    conn = get_db_conn(DB_PATH)
+    try:
+        tweets = get_recent_tweets(conn, days=days, account=account)
+    finally:
+        conn.close()
+
+    if not tweets:
+        return ""
+
+    prompt = build_all_tickers_prompt(tweets, days)
+    cmd = ["gemini", "--model", "gemini-2.5-flash-lite", "-p", prompt]
+    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    if res.returncode != 0 or not res.stdout.strip():
+        print(f"Gemini summary failed: {res.stderr}", file=sys.stderr)
+        return ""
+
+    summary = res.stdout.strip()
+    save_cache(cache_topic, {"summary": summary, "cached": False}, account=account, days=days)
+    return summary
+
+
 def analyze_topic_weighted(topic, tweets):
     """Analyze tweets with Gemini. Returns raw stdout including ---SENTIMENT_JSON--- block."""
     prompt = build_prompt(topic, tweets)
@@ -127,12 +194,32 @@ def save_cache(topic, result_data, account="aleabitoreddit", days=30, conn=None)
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("topic")
+    parser.add_argument("topic", nargs="?", default=None)
+    parser.add_argument("--summary", action="store_true",
+                        help="Summarize all tickers in recent tweets (no topic required)")
     parser.add_argument("--account", default="aleabitoreddit")
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--output")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+
+    if args.summary:
+        days = max(1, min(args.days, 90))
+        print(f"[Live Analysis] 正在分析最近 {days} 天所有標的...", file=sys.stderr)
+        summary = summarize_recent(account=args.account, days=days, force=args.force)
+        if not summary:
+            print(f"最近 {days} 天無推文資料或分析失敗。", file=sys.stderr)
+            return
+        result_data = {"summary": summary, "cached": False}
+        if args.output:
+            with open(args.output, "w") as f:
+                json.dump(result_data, f)
+        print(summary)
+        return
+
+    if not args.topic:
+        print("Error: topic is required unless --summary is used.", file=sys.stderr)
+        sys.exit(1)
 
     conn = get_db_conn(DB_PATH)
     try:
