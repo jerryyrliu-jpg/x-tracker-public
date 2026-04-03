@@ -100,14 +100,13 @@ def test_summarize_recent_empty_gemini_response(monkeypatch):
 
         monkeypatch.setattr(query_topic, "DB_PATH", db_path)
 
-        import subprocess
         def mock_run(cmd, **kwargs):
             class FakeResult:
                 returncode = 0
                 stdout = ""
                 stderr = ""
             return FakeResult()
-        monkeypatch.setattr(subprocess, "run", mock_run)
+        monkeypatch.setattr(query_topic.subprocess, "run", mock_run)
 
         result = query_topic.summarize_recent(account="testuser", days=7, force=True)
         assert result == "", "Empty Gemini stdout should return empty string"

@@ -212,7 +212,7 @@ def main():
             return
         result_data = {"summary": summary, "cached": False}
         if args.output:
-            with open(args.output, "w") as f:
+            with open(args.output, "w", encoding="utf-8") as f:
                 json.dump(result_data, f)
         print(summary)
         return
