@@ -139,7 +139,11 @@ def summarize_recent(account: str = "aleabitoreddit", days: int = 7, force: bool
 
     prompt = build_all_tickers_prompt(tweets, days)
     cmd = ["gemini", "--model", "gemini-2.5-flash-lite", "-p", prompt]
-    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=300)
+    except subprocess.TimeoutExpired:
+        print("Gemini summary timed out.", file=sys.stderr)
+        return ""
     if res.returncode != 0 or not res.stdout.strip():
         print(f"Gemini summary failed: {res.stderr}", file=sys.stderr)
         return ""
@@ -153,7 +157,11 @@ def analyze_topic_weighted(topic, tweets):
     """Analyze tweets with Gemini. Returns raw stdout including ---SENTIMENT_JSON--- block."""
     prompt = build_prompt(topic, tweets)
     cmd = ["gemini", "--model", "gemini-2.5-flash-lite", "-p", prompt]
-    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=300)
+    except subprocess.TimeoutExpired:
+        print("Gemini analysis timed out.", file=sys.stderr)
+        return ""
     if res.returncode != 0:
         print(f"Error running gemini command: {res.stderr}", file=sys.stderr)
         return ""
