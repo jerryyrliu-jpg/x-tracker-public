@@ -64,25 +64,28 @@ def get_recent_tweets(conn, days: int, account: str = "aleabitoreddit") -> list:
 
 Groups tweets by day (not week — short windows suit day-level granularity). Instructs Gemini to:
 1. Identify all mentioned tickers/assets
-2. Output per-ticker: sentiment label + one-sentence view
-3. Note intra-window sentiment shifts
+2. Output per-ticker in a strict format (no extra separators)
+3. Group list-type tweets (ETF holdings, watchlists) under the parent ticker with a `成分股：` sub-line — do not promote each component to a top-level entry
+4. Note intra-window sentiment shifts
+5. Never quote raw tweet text in the output
 
+**Output format (exact template shown to Gemini):**
 ```
-今日：YYYY-MM-DD（最近 N 天推文分析）
+**$TICKER**
+情緒：Bullish
+主要觀點：一句話摘要。
 
-數據（依日分組）：{...}
-
-請：
-1. 找出所有被提及的標的（股票、加密貨幣等）
-2. 每個標的輸出：
-   - 情緒：Bullish / Bearish / Neutral
-   - 一句主要觀點摘要
-3. 若同一標的在不同天有不同立場，請註明轉變
-
-繁體中文總結。
+**$DRAM**
+情緒：Bullish
+主要觀點：優質記憶體 ETF，涵蓋主要廠商。
+成分股：$MU 24.6%、Samsung 24.1%、SK Hynix 23.1%、$SNDK 4.9%、$WDC 4.8%
 ```
+
+Tickers separated by one blank line. No commas or symbols between fields.
 
 No `---SENTIMENT_JSON---` block — this is a prose summary, not per-tweet labelling.
+
+**Gemini timeout:** 300s (raised from 120s — full-text tweet payloads can be large). `subprocess.TimeoutExpired` is caught and returns `""` gracefully.
 
 ### 4.3 `summarize_recent(account, days)` — `query_topic.py`
 
