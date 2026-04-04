@@ -5,7 +5,7 @@ from pathlib import Path
 from utils import get_db_conn
 
 TICKER_RE = re.compile(r'^[A-Z0-9.\-]{1,10}$')
-DAYS_RE = re.compile(r'\bdays:(\S+)\b', re.IGNORECASE)
+DAYS_RE = re.compile(r'\bdays?:(\S+)\b', re.IGNORECASE)
 
 SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
