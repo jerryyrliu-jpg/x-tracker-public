@@ -120,7 +120,7 @@ async def on_message(message):
         ticker, days = parse_ticker_message(raw)
         if TICKER_RE.match(ticker):
             safe_ticker = re.sub(r'[^A-Z0-9]', '_', ticker)
-            out_file = f"/tmp/bot_{safe_ticker}.json"
+            out_file = f"/tmp/bot_{safe_ticker}_{message.id}.json"
             cmd = [
                 sys.executable,
                 str(SCRAPER_BASE / "query_topic.py"),
