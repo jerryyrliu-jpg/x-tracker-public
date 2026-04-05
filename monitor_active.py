@@ -120,7 +120,7 @@ async def main():
 
             # 隨機抖動間隔 (15 ± 2 分鐘)
             jitter = random.randint(-120, 120)
-            sleep_time = 900 + jitter
+            sleep_time = 3600 + jitter
             logger.info(f"😴 Sleeping for {sleep_time}s (Jitter: {jitter}s)...")
             await asyncio.sleep(sleep_time)
 

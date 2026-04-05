@@ -43,7 +43,7 @@ async def intercept_route(route):
 
 async def human_like_scroll(page):
     """模擬人類隨機滾動行為"""
-    steps = random.randint(2, 4)
+    steps = random.randint(4, 7)
     for _ in range(steps):
         scroll_amount = random.randint(300, 700)
         await page.mouse.wheel(0, scroll_amount)
@@ -66,7 +66,7 @@ async def scrape():
             # 導航至帳號頁面
             await asyncio.sleep(random.uniform(1.0, 3.0))
             url = f"https://x.com/{ACCOUNT}"
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            await page.goto(url, wait_until="networkidle", timeout=60000)
             
             # 使用 data-testid 定位推文
             try:
@@ -101,6 +101,7 @@ async def scrape():
 
                         time_el = await t.query_selector("time")
                         tm = await time_el.get_attribute("datetime") if time_el else datetime.now().isoformat()
+                        print(f"   - [ID:{tid}] {tm} | {txt[:30]}...")
 
                         cursor = conn.cursor()
                         cursor.execute(
@@ -109,6 +110,7 @@ async def scrape():
                         )
 
                         if cursor.rowcount > 0:
+                            print(f"     🆕 NEW TWEET!")
                             new_count += 1
                             await post_to_discord({"id": tid, "text": txt, "time": tm})
                     except Exception as e:
