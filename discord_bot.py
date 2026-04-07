@@ -13,12 +13,13 @@ DAYS_RE = re.compile(r'\bdays?:(\S+)\b', re.IGNORECASE)
 SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
+GUILD_ID = os.environ.get("DISCORD_GUILD_ID")  # set for dev (instant guild sync); unset = no auto-sync
 TAIPEI = timezone(timedelta(hours=8))
 DAILY_TIME_UTC = time(12, 0, tzinfo=timezone.utc)  # 20:00 Taipei
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="/", intents=intents)
+bot = commands.Bot(command_prefix="$", intents=intents)
 tree = bot.tree
 
 
@@ -135,8 +136,10 @@ async def scheduled_summary():
 
 @bot.event
 async def on_ready():
-    await tree.sync()
-    print("Slash commands synced.")
+    if GUILD_ID:
+        guild = discord.Object(id=int(GUILD_ID))
+        await tree.sync(guild=guild)
+        print(f"Slash commands synced to guild {GUILD_ID} (dev mode).")
     print(f"Bot is ready! Logged in as {bot.user}")
     if not scheduled_summary.is_running():
         scheduled_summary.start()
@@ -162,7 +165,8 @@ async def stats(interaction: discord.Interaction):
 @tree.command(name="summary", description="生成全標的情緒摘要報告")
 @app_commands.describe(days="要追蹤的天數 (預設 7, 上限 90)")
 async def summary(interaction: discord.Interaction, days: int = 7):
-    await interaction.response.defer()  # Gemini analysis takes time
+    days = max(1, min(days, 90))
+    await interaction.response.defer(thinking=True)
     out_file = f"/tmp/bot_summary_{days}_{interaction.id}.json"
     cmd = [
         sys.executable,
@@ -178,7 +182,7 @@ async def summary(interaction: discord.Interaction, days: int = 7):
         stderr=asyncio.subprocess.PIPE,
         cwd=str(SCRAPER_BASE),
     )
-    stdout, stderr = await proc.communicate()
+    _, stderr = await proc.communicate()
 
     if proc.returncode == 0 and os.path.exists(out_file):
         try:
@@ -187,10 +191,7 @@ async def summary(interaction: discord.Interaction, days: int = 7):
             summary_text = res.get("summary", "")
             if summary_text:
                 for i in range(0, len(summary_text), 1900):
-                    if i == 0:
-                        await interaction.followup.send(summary_text[i : i + 1900])
-                    else:
-                        await interaction.channel.send(summary_text[i : i + 1900])
+                    await interaction.followup.send(summary_text[i : i + 1900])
             else:
                 await interaction.followup.send("分析失敗，請稍後再試。")
         except Exception as e:
@@ -250,9 +251,10 @@ async def on_message(message):
 
 
 @tree.command(name="analyze", description="分析特定標的的觀點趨勢")
-@app_commands.describe(symbol="標的名稱 (如 TSLA, BTC)", days="追蹤天數 (預設 30)")
+@app_commands.describe(symbol="標的名稱 (如 TSLA, BTC)", days="追蹤天數 (預設 30, 上限 90)")
 async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30):
-    await interaction.response.defer()
+    days = max(1, min(days, 90))
+    await interaction.response.defer(thinking=True)
     ticker = symbol.strip().upper()
     if not TICKER_RE.match(ticker):
         await interaction.followup.send("⚠️ 無效的標的名稱格式。")
@@ -274,22 +276,21 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         stderr=asyncio.subprocess.PIPE,
         cwd=str(SCRAPER_BASE),
     )
-    stdout, stderr = await proc.communicate()
+    _, stderr = await proc.communicate()
 
     if proc.returncode == 0 and os.path.exists(out_file):
         try:
             with open(out_file) as f:
                 res = json.load(f)
-            summary = res.get("summary", "")
-            for i in range(0, len(summary), 1900):
-                if i == 0:
-                    await interaction.followup.send(summary[i : i + 1900])
-                else:
-                    await interaction.channel.send(summary[i : i + 1900])
+            result_text = res.get("summary", "")
+            for i in range(0, len(result_text), 1900):
+                await interaction.followup.send(result_text[i : i + 1900])
         finally:
             if os.path.exists(out_file):
                 os.unlink(out_file)
     else:
+        if stderr:
+            print(f"Error analyzing {ticker}: {stderr.decode()}")
         await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 
