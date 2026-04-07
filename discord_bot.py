@@ -39,18 +39,6 @@ def parse_ticker_message(raw: str) -> tuple[str, int]:
     return raw.strip().upper(), days
 
 
-def parse_days_from_args(args_str: str, default: int = 7) -> int:
-    """Parse optional days:N from bot command argument string.
-
-    Returns days (clamped 1–90), defaulting to `default` if absent or invalid.
-    """
-    m = DAYS_RE.search(args_str)
-    if m:
-        val = m.group(1)
-        if val.isdigit():
-            return max(1, min(int(val), 90))
-    return default
-
 
 async def _run_daily_summary(webhook_url: str) -> None:
     """Call query_topic.py --summary --days 1 and send result via webhook."""
@@ -236,11 +224,14 @@ async def on_message(message):
 
                 if proc.returncode == 0 and os.path.exists(out_file):
                     try:
-                        with open(out_file) as f:
+                        with open(out_file, encoding="utf-8") as f:
                             res = json.load(f)
-                        summary = res["summary"]
-                        for i in range(0, len(summary), 1900):
-                            await message.channel.send(summary[i : i + 1900])
+                        result_text = res.get("summary", "")
+                        if result_text:
+                            for i in range(0, len(result_text), 1900):
+                                await message.channel.send(result_text[i : i + 1900])
+                        else:
+                            await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
                     finally:
                         os.unlink(out_file)
                 else:
@@ -280,11 +271,14 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
 
     if proc.returncode == 0 and os.path.exists(out_file):
         try:
-            with open(out_file) as f:
+            with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
             result_text = res.get("summary", "")
-            for i in range(0, len(result_text), 1900):
-                await interaction.followup.send(result_text[i : i + 1900])
+            if result_text:
+                for i in range(0, len(result_text), 1900):
+                    await interaction.followup.send(result_text[i : i + 1900])
+            else:
+                await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
         finally:
             if os.path.exists(out_file):
                 os.unlink(out_file)

@@ -27,12 +27,6 @@ def run(coro):
 # ---------------------------------------------------------------------------
 
 class TestStats:
-    def _mock_db(self, total, rows):
-        conn = MagicMock()
-        conn.execute.return_value.fetchone.return_value = [total]
-        conn.execute.return_value.fetchall.return_value = rows
-        return conn
-
     def test_stats_sends_message(self):
         interaction = _make_interaction()
         conn = MagicMock()

@@ -6,7 +6,7 @@ plotly
 pandas
 python-dotenv
 pyyaml
-discord.py>=2.0
+discord.py>=2.3,<3
 pytest
 playwright
 feedparser
