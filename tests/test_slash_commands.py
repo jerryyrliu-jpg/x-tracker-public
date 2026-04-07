@@ -5,6 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch, mock_open
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import os
+os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
+
 with patch("discord.ext.commands.Bot.run"):
     import discord_bot
 
@@ -44,16 +47,16 @@ class TestStats:
         assert "42" in msg
         assert "@aleabitoreddit" in msg
 
-    def test_stats_closes_db_on_error(self):
+    def test_stats_db_error_sends_followup_and_closes(self):
         interaction = _make_interaction()
         conn = MagicMock()
         conn.execute.side_effect = Exception("db error")
         with patch("discord_bot.get_db_conn", return_value=conn):
-            try:
-                run(discord_bot.stats.callback(interaction))
-            except Exception:
-                pass
+            run(discord_bot.stats.callback(interaction))
         conn.close.assert_called()
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "無法讀取" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +348,28 @@ class TestOnMessage:
 
         with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
              patch("os.path.exists", return_value=False), \
+             patch.object(discord_bot.bot, "process_commands", side_effect=fake_process_commands):
+            run(discord_bot.on_message(msg))
+
+        msg.channel.send.assert_awaited_once()
+        sent = msg.channel.send.call_args[0][0]
+        assert "失敗" in sent
+
+    def test_ticker_json_parse_error_sends_error(self):
+        """JSON parse failure must not cause a silent no-reply."""
+        msg = _make_message("$NVDA")
+        proc = self._mock_proc()
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        async def fake_process_commands(m):
+            pass
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data="not valid json")), \
+             patch("os.unlink"), \
              patch.object(discord_bot.bot, "process_commands", side_effect=fake_process_commands):
             run(discord_bot.on_message(msg))
 

@@ -13,6 +13,8 @@ DAYS_RE = re.compile(r'\bdays?:(\S+)\b', re.IGNORECASE)
 SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
+if not TOKEN:
+    raise RuntimeError("DISCORD_BOT_TOKEN is not set in environment")
 GUILD_ID = os.environ.get("DISCORD_GUILD_ID")  # set for dev (instant guild sync); unset = no auto-sync
 TAIPEI = timezone(timedelta(hours=8))
 DAILY_TIME_UTC = time(12, 0, tzinfo=timezone.utc)  # 20:00 Taipei
@@ -81,8 +83,13 @@ async def _run_daily_summary(webhook_url: str) -> None:
 
 async def _run_monthly_summary(webhook_url: str) -> None:
     """Call monthly_summary.py for every account in accounts.yaml."""
-    with open(SCRAPER_BASE / "accounts.yaml") as f:
-        accounts = list(yaml.safe_load(f).get("accounts", {}).keys())
+    try:
+        with open(SCRAPER_BASE / "accounts.yaml") as f:
+            accounts = list(yaml.safe_load(f).get("accounts", {}).keys())
+    except Exception as e:
+        print(f"[auto-monthly] failed to load accounts.yaml: {e}")
+        await send_discord(webhook_url, f"⚠️ 月度摘要失敗：無法讀取 accounts.yaml。\n`{e}`")
+        return
     for account in accounts:
         cmd = [
             sys.executable,
@@ -155,6 +162,10 @@ async def stats(interaction: discord.Interaction):
         rows = conn.execute(
             "SELECT account, COUNT(*), MAX(scraped_at) FROM tweets GROUP BY account"
         ).fetchall()
+    except Exception as e:
+        print(f"Error in /stats: {e}")
+        await interaction.followup.send("⚠️ 無法讀取統計資料，請稍後再試。")
+        return
     finally:
         conn.close()
     lines = [f"📊 **X-Tracker Stats** — 共 {total} 則推文"]
@@ -246,6 +257,9 @@ async def on_message(message):
                                 await message.channel.send(result_text[i : i + 1900])
                         else:
                             await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
+                    except Exception as e:
+                        print(f"Error reading {ticker} output: {e}")
+                        await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
                     finally:
                         if os.path.exists(out_file):
                             os.unlink(out_file)

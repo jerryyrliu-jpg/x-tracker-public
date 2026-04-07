@@ -1,8 +1,10 @@
-import sys, re
+import sys, re, os
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
 # Prevent bot.run(TOKEN) from blocking during import
 with patch("discord.ext.commands.Bot.run"):
