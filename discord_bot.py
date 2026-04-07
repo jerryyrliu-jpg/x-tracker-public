@@ -1,6 +1,7 @@
 import asyncio, discord, json, os, re, sys
 from datetime import datetime, time, timezone, timedelta
 from discord.ext import commands, tasks
+from discord import app_commands
 from dotenv import load_dotenv
 from pathlib import Path
 from utils import get_db_conn, load_account_config, send_discord
@@ -18,6 +19,7 @@ DAILY_TIME_UTC = time(12, 0, tzinfo=timezone.utc)  # 20:00 Taipei
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
+tree = bot.tree
 
 
 def parse_ticker_message(raw: str) -> tuple[str, int]:
@@ -133,13 +135,15 @@ async def scheduled_summary():
 
 @bot.event
 async def on_ready():
+    await tree.sync()
+    print("Slash commands synced.")
     print(f"Bot is ready! Logged in as {bot.user}")
     if not scheduled_summary.is_running():
         scheduled_summary.start()
 
 
-@bot.command()
-async def stats(ctx):
+@tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")
+async def stats(interaction: discord.Interaction):
     conn = get_db_conn(SCRAPER_BASE / "tweets.db")
     try:
         total = conn.execute("SELECT COUNT(*) FROM tweets").fetchone()[0]
@@ -152,13 +156,14 @@ async def stats(ctx):
     for account, count, last_scraped in rows:
         ts = last_scraped[:16].replace("T", " ") if last_scraped else "—"
         lines.append(f"  • @{account}: {count} 則 · 最後抓取 {ts}")
-    await ctx.send("\n".join(lines))
+    await interaction.response.send_message("\n".join(lines))
 
 
-@bot.command()
-async def summary(ctx, *, args: str = ""):
-    days = parse_days_from_args(args)
-    out_file = f"/tmp/bot_summary_{days}_{ctx.message.id}.json"
+@tree.command(name="summary", description="生成全標的情緒摘要報告")
+@app_commands.describe(days="要追蹤的天數 (預設 7, 上限 90)")
+async def summary(interaction: discord.Interaction, days: int = 7):
+    await interaction.response.defer()  # Gemini analysis takes time
+    out_file = f"/tmp/bot_summary_{days}_{interaction.id}.json"
     cmd = [
         sys.executable,
         str(SCRAPER_BASE / "query_topic.py"),
@@ -167,35 +172,37 @@ async def summary(ctx, *, args: str = ""):
         "--output", out_file,
     ]
 
-    async with ctx.typing():
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(SCRAPER_BASE),
-        )
-        stdout, stderr = await proc.communicate()
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(SCRAPER_BASE),
+    )
+    stdout, stderr = await proc.communicate()
 
-        if proc.returncode == 0 and os.path.exists(out_file):
-            try:
-                with open(out_file, encoding="utf-8") as f:
-                    res = json.load(f)
-                summary_text = res.get("summary", "")
-                if summary_text:
-                    for i in range(0, len(summary_text), 1900):
-                        await ctx.send(summary_text[i : i + 1900])
-                else:
-                    await ctx.send("分析失敗，請稍後再試。")
-            except Exception as e:
-                print(f"Error reading /summary output: {e}")
-                await ctx.send("分析失敗，請稍後再試。")
-            finally:
-                if os.path.exists(out_file):
-                    os.unlink(out_file)
-        else:
-            if stderr:
-                print(f"Error in /summary: {stderr.decode()}")
-            await ctx.send(f"最近 {days} 天無推文資料。")
+    if proc.returncode == 0 and os.path.exists(out_file):
+        try:
+            with open(out_file, encoding="utf-8") as f:
+                res = json.load(f)
+            summary_text = res.get("summary", "")
+            if summary_text:
+                for i in range(0, len(summary_text), 1900):
+                    if i == 0:
+                        await interaction.followup.send(summary_text[i : i + 1900])
+                    else:
+                        await interaction.channel.send(summary_text[i : i + 1900])
+            else:
+                await interaction.followup.send("分析失敗，請稍後再試。")
+        except Exception as e:
+            print(f"Error reading /summary output: {e}")
+            await interaction.followup.send("分析失敗，請稍後再試。")
+        finally:
+            if os.path.exists(out_file):
+                os.unlink(out_file)
+    else:
+        if stderr:
+            print(f"Error in /summary: {stderr.decode()}")
+        await interaction.followup.send(f"最近 {days} 天無推文資料。")
 
 
 @bot.event
@@ -239,6 +246,51 @@ async def on_message(message):
                     if stderr:
                         print(f"Error analyzing {ticker}: {stderr.decode()}")
                     await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
+
+
+
+@tree.command(name="analyze", description="分析特定標的的觀點趨勢")
+@app_commands.describe(symbol="標的名稱 (如 TSLA, BTC)", days="追蹤天數 (預設 30)")
+async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30):
+    await interaction.response.defer()
+    ticker = symbol.strip().upper()
+    if not TICKER_RE.match(ticker):
+        await interaction.followup.send("⚠️ 無效的標的名稱格式。")
+        return
+
+    safe_ticker = re.sub(r"[^A-Z0-9]", "_", ticker)
+    out_file = f"/tmp/bot_{safe_ticker}_{interaction.id}.json"
+    cmd = [
+        sys.executable,
+        str(SCRAPER_BASE / "query_topic.py"),
+        ticker,
+        "--days", str(days),
+        "--output", out_file,
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(SCRAPER_BASE),
+    )
+    stdout, stderr = await proc.communicate()
+
+    if proc.returncode == 0 and os.path.exists(out_file):
+        try:
+            with open(out_file) as f:
+                res = json.load(f)
+            summary = res.get("summary", "")
+            for i in range(0, len(summary), 1900):
+                if i == 0:
+                    await interaction.followup.send(summary[i : i + 1900])
+                else:
+                    await interaction.channel.send(summary[i : i + 1900])
+        finally:
+            if os.path.exists(out_file):
+                os.unlink(out_file)
+    else:
+        await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 
 bot.run(TOKEN)
