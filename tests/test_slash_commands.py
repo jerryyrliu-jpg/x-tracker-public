@@ -38,8 +38,9 @@ class TestStats:
         ]
         with patch("discord_bot.get_db_conn", return_value=conn):
             run(discord_bot.stats.callback(interaction))
-        interaction.response.send_message.assert_awaited_once()
-        msg = interaction.response.send_message.call_args[0][0]
+        interaction.response.defer.assert_awaited_once()
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
         assert "42" in msg
         assert "@aleabitoreddit" in msg
 
@@ -242,3 +243,122 @@ class TestAnalyze:
         interaction.followup.send.assert_awaited_once()
         msg = interaction.followup.send.call_args[0][0]
         assert "失敗" in msg
+
+    def test_analyze_empty_summary_sends_error(self):
+        """Empty summary string must not cause a silent non-response."""
+        interaction = _make_interaction()
+        proc = self._mock_proc()
+        payload = json.dumps({"summary": ""})
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data=payload)), \
+             patch("os.unlink"):
+            run(discord_bot.analyze.callback(interaction, symbol="NVDA", days=30))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "失敗" in msg
+
+
+# ---------------------------------------------------------------------------
+# on_message $TICKER handler
+# ---------------------------------------------------------------------------
+
+def _make_message(content: str):
+    msg = MagicMock()
+    msg.content = content
+    msg.id = 99999
+    msg.author = MagicMock()
+    msg.author.__eq__ = lambda self, other: False  # not bot.user
+    msg.channel = AsyncMock()
+    msg.channel.typing = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=None),
+        __aexit__=AsyncMock(return_value=None),
+    ))
+    return msg
+
+
+class TestOnMessage:
+    def _mock_proc(self, returncode=0):
+        proc = AsyncMock()
+        proc.returncode = returncode
+        proc.communicate = AsyncMock(return_value=(b"", b""))
+        return proc
+
+    def test_ticker_sends_result(self):
+        msg = _make_message("$NVDA")
+        proc = self._mock_proc()
+        payload = json.dumps({"summary": "Bullish on NVDA"})
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        async def fake_process_commands(m):
+            pass
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data=payload)), \
+             patch("os.unlink"), \
+             patch.object(discord_bot.bot, "process_commands", side_effect=fake_process_commands):
+            run(discord_bot.on_message(msg))
+
+        msg.channel.send.assert_awaited()
+        sent = msg.channel.send.call_args_list[0][0][0]
+        assert "NVDA" in sent
+
+    def test_ticker_empty_summary_sends_error(self):
+        msg = _make_message("$NVDA")
+        proc = self._mock_proc()
+        payload = json.dumps({"summary": ""})
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        async def fake_process_commands(m):
+            pass
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data=payload)), \
+             patch("os.unlink"), \
+             patch.object(discord_bot.bot, "process_commands", side_effect=fake_process_commands):
+            run(discord_bot.on_message(msg))
+
+        msg.channel.send.assert_awaited_once()
+        sent = msg.channel.send.call_args[0][0]
+        assert "失敗" in sent
+
+    def test_ticker_subprocess_failure_sends_error(self):
+        msg = _make_message("$TSLA")
+        proc = self._mock_proc(returncode=1)
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        async def fake_process_commands(m):
+            pass
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("os.path.exists", return_value=False), \
+             patch.object(discord_bot.bot, "process_commands", side_effect=fake_process_commands):
+            run(discord_bot.on_message(msg))
+
+        msg.channel.send.assert_awaited_once()
+        sent = msg.channel.send.call_args[0][0]
+        assert "失敗" in sent
+
+    def test_non_ticker_message_ignored(self):
+        msg = _make_message("hello world")
+
+        async def fake_process_commands(m):
+            pass
+
+        with patch.object(discord_bot.bot, "process_commands", side_effect=fake_process_commands):
+            run(discord_bot.on_message(msg))
+
+        msg.channel.send.assert_not_called()
