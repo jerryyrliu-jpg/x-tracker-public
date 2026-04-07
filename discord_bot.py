@@ -153,6 +153,16 @@ async def on_ready():
         scheduled_summary.start()
 
 
+@bot.command(name="sync")
+@commands.is_owner()
+async def sync_commands(ctx):
+    """One-time global slash command sync (bot owner only). Takes up to 1 hour to propagate."""
+    await ctx.send("⏳ 正在 global sync slash commands...")
+    synced = await tree.sync()
+    await ctx.send(f"✅ 已同步 {len(synced)} 個指令。最多等 1 小時後 `/` 才會出現建議。")
+    print(f"[sync] global sync done: {[s.name for s in synced]}")
+
+
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")
 async def stats(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
