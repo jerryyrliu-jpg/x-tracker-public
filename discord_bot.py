@@ -308,6 +308,9 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
                     await interaction.followup.send(result_text[i : i + 1900])
             else:
                 await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
+        except Exception as e:
+            print(f"Error reading /analyze output: {e}")
+            await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
         finally:
             if os.path.exists(out_file):
                 os.unlink(out_file)

@@ -247,6 +247,24 @@ class TestAnalyze:
         msg = interaction.followup.send.call_args[0][0]
         assert "失敗" in msg
 
+    def test_analyze_json_parse_error_sends_error(self):
+        """JSON parse failure must not cause a silent non-response."""
+        interaction = _make_interaction()
+        proc = self._mock_proc()
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data="not valid json")), \
+             patch("os.unlink"):
+            run(discord_bot.analyze.callback(interaction, symbol="NVDA", days=30))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "失敗" in msg
+
     def test_analyze_empty_summary_sends_error(self):
         """Empty summary string must not cause a silent non-response."""
         interaction = _make_interaction()
