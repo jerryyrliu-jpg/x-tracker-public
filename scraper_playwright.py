@@ -22,7 +22,7 @@ ACCOUNT = "aleabitoreddit"
 async def post_to_discord(tweet):
     if not DISCORD_WEBHOOK:
         return
-    msg = f"**@{ACCOUNT}** \\\`{tweet['time']}\\\`\n{tweet['text']}\nhttps://x.com/{ACCOUNT}/status/{tweet['id']}"
+    msg = fr"**@{ACCOUNT}** \\\`{tweet['time']}\\\`\n{tweet['text']}\nhttps://x.com/{ACCOUNT}/status/{tweet['id']}"
     async with httpx.AsyncClient() as client:
         try:
             await client.post(DISCORD_WEBHOOK, json={"content": msg}, timeout=15)

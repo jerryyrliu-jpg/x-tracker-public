@@ -118,9 +118,9 @@ async def main():
                 await send_discord(DISCORD_WEBHOOK, msg)
                 logger.info("💓 Heartbeat sent to Discord.")
 
-            # 隨機抖動間隔 (15 ± 2 分鐘)
-            jitter = random.randint(-120, 120)
-            sleep_time = 3600 + jitter
+            # 隨機抖動間隔 (2小時 +/- 5-15 分鐘)
+            jitter = random.randint(300, 900) * random.choice([-1, 1])
+            sleep_time = 7200 + jitter
             logger.info(f"😴 Sleeping for {sleep_time}s (Jitter: {jitter}s)...")
             await asyncio.sleep(sleep_time)
 

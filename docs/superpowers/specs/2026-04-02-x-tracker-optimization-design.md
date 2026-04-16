@@ -35,10 +35,24 @@ scraper.py                     ← twscrape-based scraper (legacy, NOT called by
 |---------|-------------|
 | v3.3 | Bug fixes: FTS query_cache table, async Discord bot, input validation, utils consolidation |
 | v3.4 | Active Polling: monitor_active.py, self-healing Chrome restart, jitter, metrics, heartbeat |
+| v3.5 | Resource Management: /pausex, /resumex, Chrome profile isolation, async subprocess, fr-string fix |
 | v3.4.1 | Hotfix: FTS5 not synced in scraper_playwright.py; all code-review issues patched |
 
 ---
 
+
+---
+
+## 2.5 Resource Governance (v3.5)
+
+To resolve resource contention between X-Tracker and manual Chrome usage, the following governance model is implemented:
+
+**Manual-Override Pattern:**
+- **`/pausex`**: Stops `monitor_active.py` and `monitor_rss.py`. Force-kills Chrome instances tied to the `x_scraper` profile using `pkill -f "Google Chrome.*x_scraper"`.
+- **`/resumex`**: Restores the environment. Runs `restart_chrome.sh` (Headless-new) and restarts monitor processes using the project's virtual environment Python.
+- **Isolation**: By targeting the specific `--user-data-dir` profile string in `pkill`, the system ensures that the user's personal Chrome windows remain untouched during automated restarts.
+
+---
 ## 3. Optimization Opportunities
 
 ### 3.1 Feature Extension

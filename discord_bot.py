@@ -330,4 +330,50 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 
+
+@tree.command(name="pausex", description="暫停 X-Tracker 輪詢並釋放 Chrome 資源")
+async def pausex(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    # 1. 停止所有監控進程
+    p1 = await asyncio.create_subprocess_shell("pkill -f monitor_active.py")
+    await p1.wait()
+    p2 = await asyncio.create_subprocess_shell("pkill -f monitor_rss.py")
+    await p2.wait()
+    # 2. 強制關閉 Chrome (帶有特定 profile)
+    p3 = await asyncio.create_subprocess_shell("pkill -f \"Google Chrome.*x_scraper\"")
+    await p3.wait()
+    
+    await interaction.followup.send("🛑 **X-Tracker 已暫停**。Chrome 資源已釋放，您可以手動使用 Chrome。")
+
+
+@tree.command(name="resumex", description="恢復 X-Tracker 輪詢並重啟 Chrome")
+async def resumex(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    # 0. 先清理舊的監控進程，確保冪等性
+    p0a = await asyncio.create_subprocess_shell("pkill -f monitor_active.py")
+    await p0a.wait()
+    p0b = await asyncio.create_subprocess_shell("pkill -f monitor_rss.py")
+    await p0b.wait()
+
+    # 1. 重啟 Chrome (透過腳本)
+    restart_script = SCRAPER_BASE / "scripts" / "restart_chrome.sh"
+    if restart_script.exists():
+        p_restart = await asyncio.create_subprocess_exec("bash", str(restart_script))
+        await p_restart.wait()
+    
+    # 2. 啟動監控進程 (使用 venv python)
+    venv_python = SCRAPER_BASE / "venv" / "bin" / "python"
+    active_script = SCRAPER_BASE / "monitor_active.py"
+    rss_script = SCRAPER_BASE / "monitor_rss.py"
+    
+    cmd_active = f"nohup \"{venv_python}\" \"{active_script}\" > \"{SCRAPER_BASE}/monitor_active.log\" 2>&1 &"
+    cmd_rss = f"nohup \"{venv_python}\" \"{rss_script}\" > \"{SCRAPER_BASE}/monitor_rss.log\" 2>&1 &"
+    
+    await asyncio.create_subprocess_shell(cmd_active)
+    await asyncio.create_subprocess_shell(cmd_rss)
+    
+    await interaction.followup.send("🚀 **X-Tracker 已恢復**。Chrome 已重啟並恢復監控輪詢。")
+
+
 bot.run(TOKEN)
+
