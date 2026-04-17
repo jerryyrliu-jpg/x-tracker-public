@@ -1,4 +1,4 @@
-import asyncio, discord, json, os, re, sys
+import asyncio, discord, json, os, re, sys, logging
 from datetime import datetime, time, timezone, timedelta
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -21,6 +21,7 @@ DAILY_TIME_UTC = time(12, 0, tzinfo=timezone.utc)  # 20:00 Taipei
 
 intents = discord.Intents.default()
 intents.message_content = True
+logging.basicConfig(level=logging.INFO)
 bot = commands.Bot(command_prefix="$", intents=intents)
 tree = bot.tree
 
@@ -144,14 +145,62 @@ async def scheduled_summary():
 
 @bot.event
 async def on_ready():
+    print(f"[bot] on_ready triggered for {bot.user}")
     if GUILD_ID:
         guild = discord.Object(id=int(GUILD_ID))
-        await tree.sync(guild=guild)
-        print(f"Slash commands synced to guild {GUILD_ID} (dev mode).")
-    print(f"Bot is ready! Logged in as {bot.user}")
+        print(f"[bot] Syncing to guild {GUILD_ID}...")
+        try:
+            tree.copy_global_to(guild=guild)
+            print(f"[bot] Copy global to guild done.")
+            synced = await tree.sync(guild=guild)
+            print(f"[bot] Guild synced {len(synced)} commands.")
+        except Exception as e:
+            print(f"[bot] Guild sync error: {e}")
+    
+
+
+    print(f"[bot] Bot is ready!")
+    await bot.change_presence(activity=discord.Game(name="V3.7_LOCAL_ACTIVE"))
     if not scheduled_summary.is_running():
         scheduled_summary.start()
 
+
+@bot.command(name="summary_test")
+async def summary_prefix(ctx, days: int = 1):
+    print(f"[bot]  called with days={days}")
+    await ctx.send(f"正在為您準備最近 {days} 天的摘要分析... (這可能需要一點時間)")
+    
+    out_file = f"/tmp/prefix_summary_{days}_{ctx.message.id}.json"
+    cmd = [
+        sys.executable,
+        str(SCRAPER_BASE / "query_topic.py"),
+        "--summary",
+        "--days", str(days),
+        "--output", out_file,
+    ]
+    
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(SCRAPER_BASE),
+    )
+    _, stderr = await proc.communicate()
+    
+    if proc.returncode == 0 and os.path.exists(out_file):
+        try:
+            with open(out_file, encoding="utf-8") as f:
+                res = json.load(f)
+            text = res.get("summary", "")
+            if text:
+                for i in range(0, len(text), 1900):
+                    await ctx.send(text[i : i + 1900])
+            else:
+                await ctx.send("分析失敗，今日無資料。")
+        except:
+            await ctx.send("讀取分析結果失敗。")
+    else:
+        await ctx.send(f"分析執行失敗: {stderr.decode()[:200]}")
 
 @bot.command(name="sync")
 @commands.is_owner()
@@ -162,6 +211,10 @@ async def sync_commands(ctx):
     await ctx.send(f"✅ 已同步 {len(synced)} 個指令。最多等 1 小時後 `/` 才會出現建議。")
     print(f"[sync] global sync done: {[s.name for s in synced]}")
 
+
+@tree.command(name="ping", description="測試 Bot 是否有反應")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("pong! 我還活著。")
 
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")
 async def stats(interaction: discord.Interaction):
@@ -188,6 +241,7 @@ async def stats(interaction: discord.Interaction):
 @tree.command(name="summary", description="生成全標的情緒摘要報告")
 @app_commands.describe(days="要追蹤的天數 (預設 7, 上限 90)")
 async def summary(interaction: discord.Interaction, days: int = 7):
+    print(f"[bot] /summary called with days={days}")
     days = max(1, min(days, 90))
     await interaction.response.defer(thinking=True)
     out_file = f"/tmp/bot_summary_{days}_{interaction.id}.json"
@@ -235,6 +289,7 @@ async def on_message(message):
         return
     await bot.process_commands(message)
     if message.content.startswith("$"):
+        print(f"[bot] Message received in guild: {message.guild.name} ({message.guild.id})" if message.guild else "[bot] Message in DM")
         raw = message.content[1:].strip()
         ticker, days = parse_ticker_message(raw)
         if TICKER_RE.match(ticker):
