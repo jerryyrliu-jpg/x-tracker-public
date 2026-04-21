@@ -12,3 +12,5 @@ playwright
 feedparser
 networkx
 pyvis
+google-genai>=1.0
+tenacity>=8.0

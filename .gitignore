@@ -7,3 +7,6 @@ chrome.log
 __pycache__/
 .env
 venv/
+cpo_chain/output/
+*.db
+graph.html

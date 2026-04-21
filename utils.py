@@ -108,11 +108,19 @@ def get_db_conn(db_path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
-async def send_discord(webhook: str, content: str) -> None:
+async def send_discord(webhook: str, content: str = None, embeds: list[dict] = None) -> None:
     if not webhook:
         return
+    payload = {}
+    if content:
+        payload["content"] = content
+    if embeds:
+        payload["embeds"] = embeds
+    if not payload:
+        return
+        
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(webhook, json={"content": content})
+            await client.post(webhook, json=payload)
     except Exception as e:
         print(f"send_discord failed: {e}", file=sys.stderr)

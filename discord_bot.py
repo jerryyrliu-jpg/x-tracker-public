@@ -82,6 +82,35 @@ async def _run_daily_summary(webhook_url: str) -> None:
         await send_discord(webhook_url, msg)
 
 
+
+async def _run_cpo_update() -> None:
+    """Run Universal Supply Chain extraction and export as subprocess."""
+    extract_script = str(SCRAPER_BASE / "cpo_chain" / "extract_universal.py")
+    export_script = str(SCRAPER_BASE / "cpo_chain" / "export_universal.py")
+    
+    # 1. Extract with vector search and larger limit
+    proc1 = await asyncio.create_subprocess_exec(
+        sys.executable, extract_script, "--limit", "200", "--vector",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=str(SCRAPER_BASE)
+    )
+    st1, er1 = await proc1.communicate()
+    if proc1.returncode != 0:
+        print(f"[usci-update] {extract_script} failed: {er1.decode()}")
+        # Fallback to keyword search if vector fails
+        await asyncio.create_subprocess_exec(sys.executable, extract_script, "--limit", "100")
+
+    # 2. Export
+    proc2 = await asyncio.create_subprocess_exec(
+        sys.executable, export_script,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=str(SCRAPER_BASE)
+    )
+    st2, er2 = await proc2.communicate()
+    if proc2.returncode != 0:
+        print(f"[usci-update] {export_script} failed: {er2.decode()}")
+        return
+        
+    print("[usci-update] Universal supply chain update successful.")
+
 async def _run_monthly_summary(webhook_url: str) -> None:
     """Call monthly_summary.py for every account in accounts.yaml."""
     try:
@@ -141,6 +170,10 @@ async def scheduled_summary():
     if now_taipei.day == 1:
         print("[scheduler] 1st of month — running monthly summary")
         await _run_monthly_summary(webhook_url)
+        
+    if now_taipei.weekday() == 0: # Monday
+        print("[scheduler] Monday — running CPO chain update")
+        await _run_cpo_update()
 
 
 @bot.event
@@ -215,6 +248,72 @@ async def sync_commands(ctx):
 @tree.command(name="ping", description="測試 Bot 是否有反應")
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("pong! 我還活著。")
+
+
+@tree.command(name="supply", description="查詢通用供應鏈關係圖譜 (USCI)")
+@app_commands.describe(
+    industry="指定產業語境 (如 CPO, HBM, Liquid Cooling, 預設為 CPO)",
+    tier="篩選特定 Tier (1-5)",
+    country="篩選特定國家 (如 TW, US)",
+    company="查詢特定公司"
+)
+async def supply_query(interaction: discord.Interaction, industry: str = "CPO", tier: int = None, country: str = None, company: str = None):
+    await interaction.response.defer(thinking=True)
+    cache_path = SCRAPER_BASE / "cpo_chain" / "output" / "usci_tiers_cache.json"
+    
+    if not cache_path.exists():
+        await interaction.followup.send("⚠️ 尚未生成 USCI 快取，請等待下次排程或手動執行。")
+        return
+
+    try:
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            full_data = json.load(f)
+        
+        metadata = full_data.get("metadata", {})
+        gen_at_str = metadata.get("generated_at", "")
+        gen_at = datetime.fromisoformat(gen_at_str) if gen_at_str else datetime.now()
+        is_stale = (datetime.now() - gen_at).days >= 8
+        
+        # Filter by industry context
+        industry_data = full_data.get("industries", {}).get(industry.upper())
+        if not industry_data:
+            # Try exact match if upper match fails
+            industry_data = full_data.get("industries", {}).get(industry)
+            
+        if not industry_data:
+            available = ", ".join(full_data.get("industries", {}).keys())
+            await interaction.followup.send(f"🔍 找不到產業語境 '{industry}'。目前可用: {available}")
+            return
+
+        tiers_list = industry_data.get("tiers", [])
+        results = []
+        for item in tiers_list:
+            t_name = item.get("name", "Unknown")
+            t_val = item.get("tier", 99)
+            t_country = item.get("country", "")
+            if tier is not None and t_val != tier: continue
+            if company and company.upper() not in t_name.upper(): continue
+            if country and country.upper() != (t_country or "").upper(): continue
+            country_tag = f"[{t_country}] " if t_country else ""
+            results.append(f"T{t_val}: {country_tag}**{t_name}**")
+        
+        if not results:
+            await interaction.followup.send(f"🔍 在 '{industry}' 中找不到符合條件的公司。")
+            return
+
+        header = f"🔗 **USCI 供應鏈: {industry}** (更新於 {gen_at.strftime('%Y-%m-%d')})\n"
+        footer = "\n⚠️ 資料可能過期，請參考最新推文。" if is_stale else ""
+        
+        full_text = header + "\n".join(results[:30])
+        if len(results) > 30:
+            full_text += f"\n...以及其他 {len(results)-30} 家公司"
+        
+        full_text += footer
+        await interaction.followup.send(full_text[:2000])
+
+    except Exception as e:
+        print(f"Error in /supply: {e}")
+        await interaction.followup.send("❌ 讀取 USCI 快取失敗。")
 
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")
 async def stats(interaction: discord.Interaction):

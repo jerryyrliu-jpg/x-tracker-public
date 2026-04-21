@@ -1,0 +1,44 @@
+keywords:
+- CPO
+- 共封裝
+- co-packaged
+- silicon photonics
+- silicon photon
+- 矽光子
+- 光收發
+- 光模組
+- 光通訊
+- optical transceiver
+- optical I/O
+- photonic IC
+- PIC
+- OCS
+- Ayar Labs
+- Ranovus
+root_tickers:
+- NVDA
+- MRVL
+- AVGO
+- INTC
+- '2330'
+- CSCO
+- LITE
+- COHR
+seed_aliases:
+  Broadcom:
+  - AVGO
+  - 博通
+  Intel:
+  - INTC
+  - 英特爾
+  Marvell:
+  - MRVL
+  - 馬威爾
+  NVIDIA:
+  - NVDA
+  - 輝達
+  - NVD
+  TSMC:
+  - 台積電
+  - '2330'
+  - Taiwan Semi
