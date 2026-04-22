@@ -136,6 +136,21 @@ def init_usci_tables(conn: sqlite3.Connection):
     """)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ticker_map_name ON company_ticker_map(company_name);")
 
+    # 7. News Articles Table
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS news_articles (
+        id           INTEGER PRIMARY KEY,
+        url          TEXT NOT NULL UNIQUE,
+        source       TEXT NOT NULL CHECK(source IN ('google_news','sec_8k')),
+        title        TEXT,
+        summary      TEXT,
+        published_at INTEGER,
+        fetched_at   INTEGER DEFAULT (strftime('%s','now')),
+        processed    INTEGER DEFAULT 0
+    );
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_news_processed ON news_articles(processed, source);")
+
     conn.commit()
     logger.info("USCI database tables initialized.")
 
