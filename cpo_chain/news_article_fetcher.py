@@ -6,6 +6,7 @@ import calendar
 import logging
 from datetime import datetime, timezone, timedelta
 from urllib.parse import quote_plus
+from .company_ticker_mapper import CompanyTickerMapper
 
 logger = logging.getLogger("news_article_fetcher")
 
@@ -18,6 +19,7 @@ class NewsArticleFetcher:
         query = quote_plus(f'"{company}" supply chain OR supplier OR contract')
         feed = feedparser.parse(self.GOOGLE_RSS.format(query=query))
         if feed.get("bozo"):
+            logger.warning("Google News RSS bozo for %s: %s", company, feed.get("bozo_exception"))
             return 0
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         articles = []
@@ -51,19 +53,24 @@ class NewsArticleFetcher:
             logger.error(f"SEC submissions fetch error for {company}: {e}")
             return 0
 
+        cik_int = int(cik)  # numeric CIK for Archive paths (no leading zeros)
         data = resp.json()
         filings = data.get("filings", {}).get("recent", {})
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
         articles = []
+        filing_dates = filings.get("filingDate", [])
+        accession_numbers = filings.get("accessionNumber", [])
         for i, form in enumerate(filings.get("form", [])):
             if form != "8-K":
                 continue
-            filing_date = filings["filingDate"][i]
+            if i >= len(filing_dates) or i >= len(accession_numbers):
+                continue
+            filing_date = filing_dates[i]
             if filing_date < cutoff:
                 continue
-            adsh = filings["accessionNumber"][i]
+            adsh = accession_numbers[i]
             filing_url = (
-                f"https://www.sec.gov/Archives/edgar/data/{cik}/"
+                f"https://www.sec.gov/Archives/edgar/data/{cik_int}/"
                 f"{adsh.replace('-', '')}/{adsh}-index.htm"
             )
             articles.append({
@@ -103,8 +110,6 @@ class NewsArticleFetcher:
         Fetch news for all root companies.
         Returns {"google_news": N, "sec_8k": K}
         """
-        from .company_ticker_mapper import CompanyTickerMapper
-
         mapper = CompanyTickerMapper()
         results = {"google_news": 0, "sec_8k": 0}
         for company in root_companies:
