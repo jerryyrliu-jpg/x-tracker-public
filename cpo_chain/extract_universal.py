@@ -156,8 +156,8 @@ async def process_batch(batch_tweets, resolver, conn, new_review_entities, dry_r
                     score_delta = 1 if item["evidence_type"] == "support" else -1
                     conn.execute("""
                         INSERT INTO industry_relations 
-                        (from_company_id, to_company_id, role, role_category, industry_context, evidence_score, confidence_reason)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (from_company_id, to_company_id, role, role_category, industry_context, evidence_score, confidence_reason, base_score, confidence)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 0.5, 0.5)
                         ON CONFLICT(from_company_id, to_company_id, role, industry_context) DO UPDATE SET
                             evidence_score = evidence_score + EXCLUDED.evidence_score,
                             last_confirmed = datetime('now')

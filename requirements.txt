@@ -14,3 +14,4 @@ networkx
 pyvis
 google-genai>=1.0
 tenacity>=8.0
+feedparser==6.0.12

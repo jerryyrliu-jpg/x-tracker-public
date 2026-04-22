@@ -3,6 +3,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def get_conn(db_path) -> sqlite3.Connection:
+    """Get a database connection with WAL mode and standard settings."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
+    conn.execute("PRAGMA foreign_keys=ON;")
+    return conn
+
 def init_usci_tables(conn: sqlite3.Connection):
     """Initialize USCI (Universal Supply Chain Intelligence) tables."""
     # Enforce WAL mode and timeout

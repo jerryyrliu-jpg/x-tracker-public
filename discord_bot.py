@@ -5,6 +5,10 @@ from discord import app_commands
 from dotenv import load_dotenv
 from pathlib import Path
 from utils import get_db_conn, load_account_config, send_discord
+from cpo_chain.edgar_fetcher import EdgarFetcher
+from cpo_chain.news_fetcher import CompositeNewsFetcher
+from cpo_chain.company_ticker_mapper import CompanyTickerMapper
+from cpo_chain.confidence_updater import ConfidenceUpdater
 import yaml
 
 TICKER_RE = re.compile(r'^[A-Z0-9.\-]{1,10}$')
@@ -18,6 +22,7 @@ if not TOKEN:
 GUILD_ID = os.environ.get("DISCORD_GUILD_ID")  # set for dev (instant guild sync); unset = no auto-sync
 TAIPEI = timezone(timedelta(hours=8))
 DAILY_TIME_UTC = time(12, 0, tzinfo=timezone.utc)  # 20:00 Taipei
+CONFIDENCE_TIME_UTC = time(10, 0, tzinfo=timezone.utc) # 18:00 Taipei
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -141,6 +146,26 @@ async def _run_monthly_summary(webhook_url: str) -> None:
         else:
             print(f"[auto-monthly] {account} done.")
 
+async def _run_confidence_boost() -> None:
+    """Run News Confidence Booster (EDGAR + News RSS)."""
+    db_path = str(SCRAPER_BASE / "tweets.db")
+    mapper = CompanyTickerMapper()
+    edgar = EdgarFetcher()
+    news = CompositeNewsFetcher(mapper=mapper)
+    updater = ConfidenceUpdater(db_path, edgar, news, mapper)
+    
+    loop = asyncio.get_event_loop()
+    try:
+        # Run 100 relations per day
+        result = await loop.run_in_executor(None, updater.run, 100)
+        print(f"[confidence-boost] Result: {result}")
+    except Exception as e:
+        print(f"[confidence-boost] Error: {e}")
+
+@tasks.loop(time=CONFIDENCE_TIME_UTC)
+async def scheduled_confidence_boost():
+    print(f"[scheduler] Running confidence boost at {datetime.now(TAIPEI).strftime('%Y-%m-%d %H:%M')} Taipei")
+    await _run_confidence_boost()
 
 @tasks.loop(time=DAILY_TIME_UTC)
 async def scheduled_summary():
@@ -196,6 +221,8 @@ async def on_ready():
     await bot.change_presence(activity=discord.Game(name="V3.7_LOCAL_ACTIVE"))
     if not scheduled_summary.is_running():
         scheduled_summary.start()
+    if not scheduled_confidence_boost.is_running():
+        scheduled_confidence_boost.start()
 
 
 @bot.command(name="summary_test")
@@ -250,6 +277,21 @@ async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("pong! 我還活著。")
 
 
+def format_confidence(conf: float, edgar: float, news: float) -> str:
+    """Format confidence score with source badges."""
+    sources = []
+    if edgar > 0:
+        # Each 0.15 is roughly 1 filing in our scoring model (simplified)
+        count = max(1, int(edgar / 0.15) if edgar < 0.3 else 3)
+        sources.append(f"SEC×{count}")
+    if news > 0:
+        sources.append("News×1")
+    
+    badge = "✅ High" if conf >= 0.8 else ("📄 Mid" if conf >= 0.6 else "⚠️ Low")
+    detail = f" ({', '.join(sources)})" if sources else " (Twitter only)"
+    return f"[{badge}{detail}]"
+
+
 @tree.command(name="supply", description="查詢通用供應鏈關係圖譜 (USCI)")
 @app_commands.describe(
     industry="指定產業語境 (如 CPO, HBM, Liquid Cooling, 預設為 CPO)",
@@ -277,7 +319,6 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
         # Filter by industry context
         industry_data = full_data.get("industries", {}).get(industry.upper())
         if not industry_data:
-            # Try exact match if upper match fails
             industry_data = full_data.get("industries", {}).get(industry)
             
         if not industry_data:
@@ -286,16 +327,35 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
             return
 
         tiers_list = industry_data.get("tiers", [])
+        links = industry_data.get("links", [])
+        
         results = []
+        node_map = {r['id']: r for r in tiers_list}
+        
         for item in tiers_list:
             t_name = item.get("name", "Unknown")
             t_val = item.get("tier", 99)
             t_country = item.get("country", "")
+            t_id = item.get("id")
+            
             if tier is not None and t_val != tier: continue
             if company and company.upper() not in t_name.upper(): continue
             if country and country.upper() != (t_country or "").upper(): continue
+            
             country_tag = f"[{t_country}] " if t_country else ""
-            results.append(f"T{t_val}: {country_tag}**{t_name}**")
+            line = f"T{t_val}: {country_tag}**{t_name}**"
+            
+            # Find customers (links where this company is source)
+            customers = [l for l in links if l['source'] == t_id]
+            if customers:
+                cust_parts = []
+                for l in customers:
+                    target_name = node_map.get(l['target'], {}).get('name', 'Unknown')
+                    conf_str = format_confidence(l.get('confidence', 0.5), l.get('edgar_score', 0), l.get('news_score', 0))
+                    cust_parts.append(f"→ {target_name} {conf_str}")
+                line += "\n  " + "\n  ".join(cust_parts)
+                
+            results.append(line)
         
         if not results:
             await interaction.followup.send(f"🔍 在 '{industry}' 中找不到符合條件的公司。")
@@ -304,15 +364,23 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
         header = f"🔗 **USCI 供應鏈: {industry}** (更新於 {gen_at.strftime('%Y-%m-%d')})\n"
         footer = "\n⚠️ 資料可能過期，請參考最新推文。" if is_stale else ""
         
-        full_text = header + "\n".join(results[:30])
-        if len(results) > 30:
-            full_text += f"\n...以及其他 {len(results)-30} 家公司"
+        # Build text with limit
+        output_text = header
+        count = 0
+        for res in results:
+            if len(output_text) + len(res) + len(footer) > 1900:
+                output_text += f"\n...以及其他 {len(results)-count} 項"
+                break
+            output_text += "\n" + res
+            count += 1
         
-        full_text += footer
-        await interaction.followup.send(full_text[:2000])
+        output_text += footer
+        await interaction.followup.send(output_text[:2000])
 
     except Exception as e:
         print(f"Error in /supply: {e}")
+        import traceback
+        traceback.print_exc()
         await interaction.followup.send("❌ 讀取 USCI 快取失敗。")
 
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")

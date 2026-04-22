@@ -70,7 +70,8 @@ def get_all_links(conn: sqlite3.Connection, node_ids: list[int], industry_contex
     if not node_ids: return []
     ids_str = ", ".join([str(i) for i in node_ids])
     sql = f"""
-    SELECT from_company_id as source, to_company_id as target, role, industry_context
+    SELECT from_company_id as source, to_company_id as target, role, industry_context,
+           confidence, edgar_score, news_score
     FROM industry_relations
     WHERE status = 'active' AND industry_context = ?
     AND from_company_id IN ({ids_str})
@@ -82,6 +83,17 @@ def get_all_links(conn: sqlite3.Connection, node_ids: list[int], industry_contex
     except Exception as e:
         print(f"Links Error: {e}")
         return []
+
+def format_conf_md(l) -> str:
+    conf = l.get('confidence', 0.5)
+    edgar = l.get('edgar_score', 0)
+    news = l.get('news_score', 0)
+    sources = []
+    if edgar > 0: sources.append(f"SEC×{max(1, int(edgar/0.15))}")
+    if news > 0: sources.append("News×1")
+    badge = "✅" if conf >= 0.8 else ("📄" if conf >= 0.6 else "⚠️")
+    src_str = f" ({', '.join(sources)})" if sources else ""
+    return f"[{badge} {conf:.2f}{src_str}]"
 
 def export_all():
     conn = get_db_conn(DB_PATH)
@@ -134,7 +146,7 @@ def export_all():
                 for n in nodes:
                     customers = [l for l in links if l['source'] == n['id']]
                     if customers:
-                        cust_list = [f"{node_map.get(l['target'], 'Unknown')} ({l['role']})" for l in customers]
+                        cust_list = [f"{node_map.get(l['target'], 'Unknown')} ({l['role']}) {format_conf_md(l)}" for l in customers]
                         f_md.write(f"- **{n['name']}** -> {', '.join(cust_list)}\n")
                     else:
                         f_md.write(f"- **{n['name']}**\n")
