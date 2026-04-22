@@ -111,6 +111,7 @@ class NewsArticleFetcher:
         Returns {"google_news": N, "sec_8k": K}
         """
         mapper = CompanyTickerMapper()
+        mapper.load_or_refresh(conn)  # ensures company_ticker_map is populated
         results = {"google_news": 0, "sec_8k": 0}
         for company in root_companies:
             results["google_news"] += self.fetch_google_news(conn, company)

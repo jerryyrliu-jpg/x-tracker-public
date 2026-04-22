@@ -182,6 +182,8 @@ async def _run_news_fetch() -> None:
             fetcher = NewsArticleFetcher()
             conn = get_conn(db_path)
             try:
+                from cpo_chain.db import init_usci_tables
+                init_usci_tables(conn)
                 return fetcher.run(conn, root_companies)
             finally:
                 conn.close()
@@ -207,6 +209,8 @@ async def _run_news_extract() -> None:
         extractor = NewsExtractor(db_path, keywords_path)  # Gemini init in thread
         conn = get_conn(db_path)
         try:
+            from cpo_chain.db import init_usci_tables
+            init_usci_tables(conn)
             return extractor.run(conn, 50)
         except Exception as e:
             print(f"[news-extract] Error in thread: {e}")

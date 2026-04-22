@@ -27,13 +27,22 @@ def keywords_path(tmp_path):
     return kw
 
 
+class _MockModels:
+    def generate_content(self, **kwargs):
+        return MagicMock(text='{"relations": []}')
+
+
+class _MockClient:
+    models = _MockModels()
+
+
 def _make_extractor(keywords_path, monkeypatch):
-    """Create a NewsExtractor with the Gemini model constructor mocked out."""
-    mock_model = MagicMock()
-    with patch("cpo_chain.news_extractor.genai.GenerativeModel", return_value=mock_model):
-        extractor = NewsExtractor(db_path=":memory:", keywords_path=keywords_path)
-    # Replace model directly so tests can configure responses
-    extractor.model = mock_model
+    """Create a NewsExtractor with the Gemini Client constructor mocked out."""
+    mock_client = _MockClient()
+    monkeypatch.setattr("cpo_chain.news_extractor.genai.Client", lambda: mock_client)
+    extractor = NewsExtractor(db_path=":memory:", keywords_path=keywords_path)
+    # Expose mock_client so tests can swap out generate_content responses
+    extractor._client = mock_client
     return extractor
 
 
@@ -46,9 +55,11 @@ def test_extract_finds_relation(keywords_path, monkeypatch):
     extractor = _make_extractor(keywords_path, monkeypatch)
     payload = {"relations": [{"supplier": "TSMC", "customer": "NVIDIA",
                                "role": "wafer_fab", "industry_context": "CPO"}]}
-    mock_resp = MagicMock()
-    mock_resp.text = json.dumps(payload)
-    extractor.model.generate_content.return_value = mock_resp
+
+    class _Resp:
+        text = json.dumps(payload)
+
+    extractor._client.models.generate_content = lambda **kw: _Resp()
 
     result = extractor.extract_from_article({"title": "TSMC supplies NVIDIA", "summary": ""})
     assert len(result) == 1
@@ -58,9 +69,11 @@ def test_extract_finds_relation(keywords_path, monkeypatch):
 def test_extract_empty_response(keywords_path, monkeypatch):
     """Mock Gemini returning empty relations list → empty list."""
     extractor = _make_extractor(keywords_path, monkeypatch)
-    mock_resp = MagicMock()
-    mock_resp.text = json.dumps({"relations": []})
-    extractor.model.generate_content.return_value = mock_resp
+
+    class _Resp:
+        text = json.dumps({"relations": []})
+
+    extractor._client.models.generate_content = lambda **kw: _Resp()
 
     result = extractor.extract_from_article({"title": "No supply chain here", "summary": ""})
     assert result == []

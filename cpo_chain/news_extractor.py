@@ -1,9 +1,8 @@
 import sqlite3
 import json
 import logging
-# TODO: migrate to google.genai SDK (google.generativeai is deprecated)
-import google.generativeai as genai
-from google.generativeai.types import GenerationConfig
+from google import genai
+from google.genai.types import GenerateContentConfig
 from .entity_resolver import EntityResolver
 from .company_ticker_mapper import CompanyTickerMapper
 
@@ -52,19 +51,22 @@ class NewsExtractor:
     def __init__(self, db_path, keywords_path):
         self.db_path = db_path
         self.resolver = EntityResolver(db_path, keywords_path)
-        self.model = genai.GenerativeModel(
-            "gemini-2.0-flash",
-            generation_config=GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=EXTRACTION_SCHEMA,
-                max_output_tokens=1024,
-            )
+        self._client = genai.Client()
+        self._model = "gemini-2.0-flash"
+        self._config = GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=EXTRACTION_SCHEMA,
+            max_output_tokens=1024,
         )
 
     def extract_from_article(self, article: dict) -> list[dict]:
         """Send article to Gemini, return list of relation dicts. Raises on error."""
         text = f"{article['title'][:300]}. {article.get('summary', '')[:280]}"
-        resp = self.model.generate_content(EXTRACTION_PROMPT.format(text=text))
+        resp = self._client.models.generate_content(
+            model=self._model,
+            contents=EXTRACTION_PROMPT.format(text=text),
+            config=self._config,
+        )
         data = json.loads(resp.text.strip())
         return data.get("relations", [])
 

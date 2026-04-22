@@ -53,8 +53,7 @@ def main():
                 fetcher = NewsArticleFetcher()
                 result = fetcher.run(conn, root_companies)
                 print(f"[news-fetch] Done: {result}")
-                if result.get("errors", 0) > 0:
-                    has_errors = True
+                # Note: errors are logged internally by fetcher; no error count in return dict
 
         if args.extract:
             print(f"[news-extract] Starting extraction (limit={args.limit})...")
