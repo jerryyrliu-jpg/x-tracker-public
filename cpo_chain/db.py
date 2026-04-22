@@ -144,9 +144,9 @@ def init_usci_tables(conn: sqlite3.Connection):
         source       TEXT NOT NULL CHECK(source IN ('google_news','sec_8k')),
         title        TEXT,
         summary      TEXT,
-        published_at INTEGER,
+        published_at INTEGER,                    -- Unix epoch; NULL if unavailable
         fetched_at   INTEGER DEFAULT (strftime('%s','now')),
-        processed    INTEGER DEFAULT 0
+        processed    INTEGER DEFAULT 0 CHECK(processed BETWEEN 0 AND 3)
     );
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_news_processed ON news_articles(processed, source);")
