@@ -151,8 +151,52 @@ def init_usci_tables(conn: sqlite3.Connection):
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_news_processed ON news_articles(processed, source);")
 
+    # Migrate old FK references (cpo_companies → industry_entities, cpo_supply_relations → industry_relations)
+    _migrate_old_fk_if_needed(conn)
+
     conn.commit()
     logger.info("USCI database tables initialized.")
+
+
+def _migrate_old_fk_if_needed(conn: sqlite3.Connection):
+    """Fix legacy FK constraints that reference renamed tables (cpo_* → industry_*)."""
+    for table, old_ref, new_sql in [
+        (
+            "industry_entity_aliases",
+            "cpo_companies",
+            """CREATE TABLE industry_entity_aliases_new (
+                alias       TEXT PRIMARY KEY,
+                company_id  INTEGER,
+                status      TEXT DEFAULT 'active' CHECK(status IN ('active', 'needs_review')),
+                FOREIGN KEY(company_id) REFERENCES industry_entities(id)
+            )""",
+        ),
+        (
+            "industry_relation_evidence",
+            "cpo_supply_relations",
+            """CREATE TABLE industry_relation_evidence_new (
+                relation_id     INTEGER,
+                tweet_id        TEXT,
+                evidence_type   TEXT DEFAULT 'support' CHECK(evidence_type IN ('support', 'refute')),
+                extracted_at    TEXT DEFAULT (datetime('now')),
+                snippet         TEXT,
+                source          TEXT DEFAULT 'twitter',
+                PRIMARY KEY (relation_id, tweet_id),
+                FOREIGN KEY(relation_id) REFERENCES industry_relations(id)
+            )""",
+        ),
+    ]:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if row and old_ref in row[0]:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute(new_sql)
+            conn.execute(f"INSERT INTO {table}_new SELECT * FROM {table}")
+            conn.execute(f"DROP TABLE {table}")
+            conn.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+            conn.execute("PRAGMA foreign_keys=ON")
+            logger.info("Migrated %s FK from %s to current schema", table, old_ref)
 
 
 def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str):

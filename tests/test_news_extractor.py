@@ -1,7 +1,8 @@
 import json
 import sqlite3
+import subprocess
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from cpo_chain.db import init_usci_tables
 from cpo_chain.news_extractor import NewsExtractor, INDUSTRY_CONTEXTS
 
@@ -27,23 +28,19 @@ def keywords_path(tmp_path):
     return kw
 
 
-class _MockModels:
-    def generate_content(self, **kwargs):
-        return MagicMock(text='{"relations": []}')
+def _make_extractor(keywords_path):
+    """Create a NewsExtractor (no SDK init needed with subprocess approach)."""
+    return NewsExtractor(db_path=":memory:", keywords_path=keywords_path)
 
 
-class _MockClient:
-    models = _MockModels()
-
-
-def _make_extractor(keywords_path, monkeypatch):
-    """Create a NewsExtractor with the Gemini Client constructor mocked out."""
-    mock_client = _MockClient()
-    monkeypatch.setattr("cpo_chain.news_extractor.genai.Client", lambda: mock_client)
-    extractor = NewsExtractor(db_path=":memory:", keywords_path=keywords_path)
-    # Expose mock_client so tests can swap out generate_content responses
-    extractor._client = mock_client
-    return extractor
+def _mock_subprocess(monkeypatch, stdout: str, returncode: int = 0):
+    """Monkeypatch subprocess.run in news_extractor to return fixed output."""
+    mock = MagicMock()
+    mock.returncode = returncode
+    mock.stdout = stdout
+    mock.stderr = ""
+    monkeypatch.setattr("cpo_chain.news_extractor.subprocess.run", lambda *a, **kw: mock)
+    return mock
 
 
 # ---------------------------------------------------------------------------
@@ -51,30 +48,22 @@ def _make_extractor(keywords_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_extract_finds_relation(keywords_path, monkeypatch):
-    """Mock Gemini returning 1 relation → list has 1 item."""
-    extractor = _make_extractor(keywords_path, monkeypatch)
+    """Mock gemini CLI returning 1 relation → list has 1 item."""
     payload = {"relations": [{"supplier": "TSMC", "customer": "NVIDIA",
                                "role": "wafer_fab", "industry_context": "CPO"}]}
+    _mock_subprocess(monkeypatch, json.dumps(payload))
 
-    class _Resp:
-        text = json.dumps(payload)
-
-    extractor._client.models.generate_content = lambda **kw: _Resp()
-
+    extractor = _make_extractor(keywords_path)
     result = extractor.extract_from_article({"title": "TSMC supplies NVIDIA", "summary": ""})
     assert len(result) == 1
     assert result[0]["supplier"] == "TSMC"
 
 
 def test_extract_empty_response(keywords_path, monkeypatch):
-    """Mock Gemini returning empty relations list → empty list."""
-    extractor = _make_extractor(keywords_path, monkeypatch)
+    """Mock gemini CLI returning empty relations list → empty list."""
+    _mock_subprocess(monkeypatch, json.dumps({"relations": []}))
 
-    class _Resp:
-        text = json.dumps({"relations": []})
-
-    extractor._client.models.generate_content = lambda **kw: _Resp()
-
+    extractor = _make_extractor(keywords_path)
     result = extractor.extract_from_article({"title": "No supply chain here", "summary": ""})
     assert result == []
 
@@ -87,14 +76,10 @@ def test_run_marks_processed_1(db_conn, keywords_path, monkeypatch):
     """)
     db_conn.commit()
 
-    extractor = _make_extractor(keywords_path, monkeypatch)
-
-    # Mock extract_from_article to return 1 relation
+    extractor = _make_extractor(keywords_path)
     relation = {"supplier": "TSMC", "customer": "NVIDIA",
                  "role": "wafer_fab", "industry_context": "CPO"}
     extractor.extract_from_article = MagicMock(return_value=[relation])
-
-    # Mock resolver.resolve to return stable IDs
     extractor.resolver.resolve = MagicMock(side_effect=[(1, "TSMC", "TSM"), (2, "NVIDIA", "NVDA")])
 
     extractor.run(db_conn, limit=10)
@@ -111,7 +96,7 @@ def test_run_marks_processed_2(db_conn, keywords_path, monkeypatch):
     """)
     db_conn.commit()
 
-    extractor = _make_extractor(keywords_path, monkeypatch)
+    extractor = _make_extractor(keywords_path)
     extractor.extract_from_article = MagicMock(return_value=[])
 
     extractor.run(db_conn, limit=10)
@@ -128,8 +113,8 @@ def test_run_marks_processed_3(db_conn, keywords_path, monkeypatch):
     """)
     db_conn.commit()
 
-    extractor = _make_extractor(keywords_path, monkeypatch)
-    extractor.extract_from_article = MagicMock(side_effect=Exception("Gemini timeout"))
+    extractor = _make_extractor(keywords_path)
+    extractor.extract_from_article = MagicMock(side_effect=Exception("CLI timeout"))
 
     extractor.run(db_conn, limit=10)
 
@@ -139,7 +124,6 @@ def test_run_marks_processed_3(db_conn, keywords_path, monkeypatch):
 
 def test_existing_relation_gets_news_evidence(db_conn, keywords_path, monkeypatch):
     """Pre-existing relation (from Twitter) gets a news evidence row after run."""
-    # Insert two entities and a pre-existing relation
     db_conn.execute("INSERT INTO industry_entities (id, name, ticker) VALUES (10, 'TSMC', 'TSM')")
     db_conn.execute("INSERT INTO industry_entities (id, name, ticker) VALUES (11, 'NVIDIA', 'NVDA')")
     db_conn.execute("""
@@ -147,7 +131,6 @@ def test_existing_relation_gets_news_evidence(db_conn, keywords_path, monkeypatc
             (id, from_company_id, to_company_id, role, role_category, base_score, confidence, industry_context)
         VALUES (99, 10, 11, 'wafer_fab', 'upstream', 0.8, 0.8, 'CPO')
     """)
-    # Insert existing Twitter evidence
     db_conn.execute("""
         INSERT INTO industry_relation_evidence (relation_id, tweet_id, snippet, source)
         VALUES (99, 'tweet_abc', 'TSMC manufactures for NVIDIA', 'twitter')
@@ -158,12 +141,10 @@ def test_existing_relation_gets_news_evidence(db_conn, keywords_path, monkeypatc
     """)
     db_conn.commit()
 
-    extractor = _make_extractor(keywords_path, monkeypatch)
-
+    extractor = _make_extractor(keywords_path)
     relation = {"supplier": "TSMC", "customer": "NVIDIA",
                  "role": "wafer_fab", "industry_context": "CPO"}
     extractor.extract_from_article = MagicMock(return_value=[relation])
-    # Resolve returns the pre-existing entity IDs → INSERT OR IGNORE on relations will skip
     extractor.resolver.resolve = MagicMock(side_effect=[(10, "TSMC", "TSM"), (11, "NVIDIA", "NVDA")])
 
     extractor.run(db_conn, limit=10)

@@ -1,34 +1,14 @@
 import sqlite3
 import json
 import logging
-from google import genai
-from google.genai.types import GenerateContentConfig
+import re
+import subprocess
 from .entity_resolver import EntityResolver
 from .company_ticker_mapper import CompanyTickerMapper
 
 logger = logging.getLogger("news_extractor")
 
 INDUSTRY_CONTEXTS = ["CPO", "HBM", "AI_Server", "Liquid_Cooling", "Advanced_Packaging", "Other"]
-
-EXTRACTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "relations": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "supplier": {"type": "string"},
-                    "customer": {"type": "string"},
-                    "role": {"type": "string"},
-                    "industry_context": {"type": "string", "enum": INDUSTRY_CONTEXTS}
-                },
-                "required": ["supplier", "customer", "role", "industry_context"]
-            }
-        }
-    },
-    "required": ["relations"]
-}
 
 EXTRACTION_PROMPT = """
 你是供應鏈分析師。從以下新聞標題與摘要中，識別明確的供應鏈關係。
@@ -37,6 +17,10 @@ EXTRACTION_PROMPT = """
 - 只萃取有明確 supplier/customer/manufacturer/partner 關係的內容
 - 不確定的關係請忽略
 - industry_context 必須從以下選擇：CPO, HBM, AI_Server, Liquid_Cooling, Advanced_Packaging, Other
+
+輸出嚴格 JSON（無其他文字）：
+{{"relations": [{{"supplier": "公司A", "customer": "公司B", "role": "角色描述", "industry_context": "CPO"}}]}}
+若無明確關係：{{"relations": []}}
 
 新聞：{text}
 """
@@ -51,24 +35,28 @@ class NewsExtractor:
     def __init__(self, db_path, keywords_path):
         self.db_path = db_path
         self.resolver = EntityResolver(db_path, keywords_path)
-        self._client = genai.Client()
-        self._model = "gemini-2.0-flash"
-        self._config = GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=EXTRACTION_SCHEMA,
-            max_output_tokens=1024,
-        )
 
     def extract_from_article(self, article: dict) -> list[dict]:
-        """Send article to Gemini, return list of relation dicts. Raises on error."""
+        """Call gemini CLI to extract relations. Raises on error."""
         text = f"{article['title'][:300]}. {article.get('summary', '')[:280]}"
-        resp = self._client.models.generate_content(
-            model=self._model,
-            contents=EXTRACTION_PROMPT.format(text=text),
-            config=self._config,
+        prompt = EXTRACTION_PROMPT.format(text=text)
+        result = subprocess.run(
+            ["gemini", "-p", prompt],
+            capture_output=True, text=True, encoding="utf-8"
         )
-        data = json.loads(resp.text.strip())
-        return data.get("relations", [])
+        if result.returncode != 0:
+            raise RuntimeError(f"gemini CLI error: {result.stderr[:200]}")
+        match = re.search(r'(\{.*\})', result.stdout, re.DOTALL)
+        if not match:
+            return []
+        data = json.loads(match.group(1))
+        relations = data.get("relations", [])
+        # Validate industry_context against enum
+        valid = set(INDUSTRY_CONTEXTS)
+        for rel in relations:
+            if rel.get("industry_context") not in valid:
+                rel["industry_context"] = "Other"
+        return relations
 
     def run(self, conn: sqlite3.Connection, limit: int = 50) -> dict:
         """
