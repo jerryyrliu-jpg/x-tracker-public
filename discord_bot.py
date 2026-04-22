@@ -166,19 +166,32 @@ async def _run_confidence_boost() -> None:
 
 async def _run_news_fetch() -> None:
     """Run NewsArticleFetcher for all root companies from keywords.yaml."""
-    import yaml
     from cpo_chain.news_article_fetcher import NewsArticleFetcher
     from cpo_chain.db import get_conn
     db_path = str(SCRAPER_BASE / "tweets.db")
+    keywords_path = SCRAPER_BASE / "cpo_chain" / "keywords.yaml"
+
+    def _fetch_in_thread():
+        try:
+            with open(keywords_path) as f:
+                cfg = yaml.safe_load(f)
+            root_companies = cfg.get("root_tickers") or []
+            if not root_companies:
+                print("[news-fetch] WARNING: root_tickers is empty in keywords.yaml — skipping")
+                return {"google_news": 0, "sec_8k": 0}
+            fetcher = NewsArticleFetcher()
+            conn = get_conn(db_path)
+            try:
+                return fetcher.run(conn, root_companies)
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[news-fetch] Error in thread: {e}")
+            return None
+
     try:
-        with open(SCRAPER_BASE / "cpo_chain" / "keywords.yaml") as f:
-            cfg = yaml.safe_load(f)
-        root_companies = cfg.get("root_tickers", [])
-        fetcher = NewsArticleFetcher()
-        conn = get_conn(db_path)
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, fetcher.run, conn, root_companies)
-        conn.close()
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _fetch_in_thread)
         print(f"[news-fetch] Result: {result}")
     except Exception as e:
         print(f"[news-fetch] Error: {e}")
@@ -189,12 +202,21 @@ async def _run_news_extract() -> None:
     from cpo_chain.db import get_conn
     db_path = str(SCRAPER_BASE / "tweets.db")
     keywords_path = str(SCRAPER_BASE / "cpo_chain" / "keywords.yaml")
-    try:
-        extractor = NewsExtractor(db_path, keywords_path)
+
+    def _extract_in_thread():
+        extractor = NewsExtractor(db_path, keywords_path)  # Gemini init in thread
         conn = get_conn(db_path)
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, extractor.run, conn, 50)
-        conn.close()
+        try:
+            return extractor.run(conn, 50)
+        except Exception as e:
+            print(f"[news-extract] Error in thread: {e}")
+            return None
+        finally:
+            conn.close()
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _extract_in_thread)
         print(f"[news-extract] Result: {result}")
     except Exception as e:
         print(f"[news-extract] Error: {e}")
