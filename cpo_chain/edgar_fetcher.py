@@ -20,14 +20,13 @@ class _TokenBucket:
             now = time.monotonic()
             self._tokens = min(self._rate, self._tokens + (now - self._last) * self._rate)
             self._last = now
-            if self._tokens < 1:
-                # Calculate sleep time needed
-                sleep_time = (1 - self._tokens) / self._rate
-                time.sleep(sleep_time)
-                # Update tokens after sleep
-                self._tokens = 0
-            else:
+            if self._tokens >= 1:
                 self._tokens -= 1
+                return
+            sleep_time = (1 - self._tokens) / self._rate
+            self._tokens = 0
+            self._last = now + sleep_time  # 預先撥快，避免下個 caller 多給 token
+        time.sleep(sleep_time)  # sleep 在 lock 外
 
 _edgar_bucket = _TokenBucket(rate=8)
 
@@ -60,10 +59,20 @@ class EdgarFetcher:
                 results = []
                 for h in hits[:5]:
                     source = h.get("_source", {})
+                    adsh = source.get("adsh", "")
+                    cik = str(source.get("ciks", [""])[0]) if source.get("ciks") else ""
+                    filing_url = (
+                        f"https://www.sec.gov/Archives/edgar/data/{cik}/{adsh.replace('-', '')}/{adsh}-index.htm"
+                        if adsh and cik else ""
+                    )
+                    highlights = h.get("highlight", {})
+                    snippet = next(
+                        (v[0] for v in highlights.values() if v), ""
+                    )
                     results.append({
-                        "url": source.get("period_of_report", ""), # This is not exactly URL, but filing period
+                        "url": filing_url,
                         "form_type": source.get("form_type", ""),
-                        "snippet": h.get("highlight", {}).get("file_date", [""])[0], # Not exactly snippet, but illustrative
+                        "snippet": snippet,
                         "file_date": source.get("file_date", "")
                     })
                 return results

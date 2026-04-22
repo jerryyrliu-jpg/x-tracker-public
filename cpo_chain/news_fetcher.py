@@ -2,8 +2,9 @@
 import feedparser
 import sqlite3
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Protocol, Optional
+from urllib.parse import quote_plus
 
 logger = logging.getLogger("news_fetcher")
 
@@ -15,21 +16,20 @@ class GoogleNewsRSSFetcher:
     RSS_URL = "https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
 
     def fetch(self, company_a: str, company_b: str, days: int = 30) -> list[dict]:
-        # query example: "NVIDIA" "TSMC" supply chain
-        query = f'"{company_a}" "{company_b}" supply chain'.replace(" ", "+")
+        query = quote_plus(f'"{company_a}" "{company_b}" supply chain')
         url = self.RSS_URL.format(query=query)
         feed = feedparser.parse(url)
-        
-        if feed.get("bozo"):  # feed 損壞
+
+        if feed.get("bozo"):
             logger.warning(f"Google News RSS bozo: {feed.get('bozo_exception')}")
             return []
-            
-        cutoff = datetime.now() - timedelta(days=days)
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         results = []
         for entry in feed.entries:
             try:
-                # entry.published_parsed: (tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec, tm_wday, tm_yday, tm_isdst)
-                pub = datetime(*entry.published_parsed[:6])
+                import calendar
+                pub = datetime.fromtimestamp(calendar.timegm(entry.published_parsed), tz=timezone.utc)
                 if pub >= cutoff:
                     results.append({"title": entry.title, "link": entry.link, "published": pub.isoformat()})
             except Exception as e:
@@ -58,16 +58,18 @@ class YahooRSSFetcher:
             logger.warning(f"Yahoo RSS bozo: {feed.get('bozo_exception')}")
             return []
             
-        cutoff = datetime.now() - timedelta(days=days)
+        import calendar
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         results = []
         for entry in feed.entries:
             try:
-                pub = datetime(*entry.published_parsed[:6])
+                pub = datetime.fromtimestamp(calendar.timegm(entry.published_parsed), tz=timezone.utc)
                 if pub >= cutoff:
                     text = (entry.title + " " + entry.get("summary", "")).lower()
                     if company_b.lower() in text:
                         results.append({"title": entry.title, "link": entry.link, "published": pub.isoformat()})
             except Exception as e:
+                logger.debug(f"Error parsing Yahoo RSS entry: {e}")
                 continue
         return results
 
@@ -89,27 +91,21 @@ class CompositeNewsFetcher:
         self.mapper = mapper  # CompanyTickerMapper，供 Yahoo fallback 用
 
     def boost_score(self, company_a: str, company_b: str, conn: Optional[sqlite3.Connection] = None) -> tuple[float, str]:
-        # 1. 嘗試 Google News
-        query_query = f'"{company_a}" "{company_b}" supply chain'.replace(" ", "+")
-        url = self.google.RSS_URL.format(query=query_query)
-        feed = feedparser.parse(url)
-        
-        # Check if Google News worked
-        if not feed.get("bozo"):
-            score, status = self.google.boost_score(company_a, company_b)
-            if status == "success":
-                return score, "google_news"
-            elif status == "no_match":
-                # If no match in Google, maybe try Yahoo anyway? 
-                # The plan says fallback only when bozo=True.
-                pass
-        
-        # 2. Fallback to Yahoo if Google failed or no match and we have mapper
-        if self.mapper and conn:
+        # 1. 嘗試 Google News（單次 fetch，不重複）
+        results = self.google.fetch(company_a, company_b)
+        google_bozo = not results and feedparser.parse(
+            self.google.RSS_URL.format(query=quote_plus(f'"{company_a}" "{company_b}" supply chain'))
+        ).get("bozo", False)
+
+        if results:
+            return 0.10, "google_news"
+
+        # 2. Fallback Yahoo 只在 Google feed 損壞（bozo）時使用
+        if google_bozo and self.mapper and conn:
             ticker_a = self.mapper.get_ticker(conn, company_a)
             if ticker_a:
                 score, status = self.yahoo.boost_score(ticker_a, company_b)
                 if status == "success":
                     return score, "yahoo_rss"
-                    
+
         return 0.0, "no_match"

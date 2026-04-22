@@ -102,9 +102,48 @@ def init_usci_tables(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_status ON industry_relations(status);")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_context ON industry_relations(industry_context);")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_tweet ON industry_relation_evidence(tweet_id);")
-    
+
+    # --- Confidence Booster 擴充（冪等，兼容舊 DB）---
+    _add_column_if_missing(conn, "industry_relations", "base_score",  "REAL DEFAULT 0.5")
+    _add_column_if_missing(conn, "industry_relations", "edgar_score", "REAL DEFAULT 0.0")
+    _add_column_if_missing(conn, "industry_relations", "news_score",  "REAL DEFAULT 0.0")
+    _add_column_if_missing(conn, "industry_relation_evidence", "source", "TEXT DEFAULT 'twitter'")
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS confidence_audit (
+        id           INTEGER PRIMARY KEY,
+        relation_id  INTEGER NOT NULL,
+        source       TEXT NOT NULL CHECK(source IN ('edgar','google_news','yahoo_rss')),
+        url          TEXT,
+        snippet      TEXT,
+        boost_value  REAL NOT NULL,
+        status       TEXT NOT NULL CHECK(status IN ('success','api_error','no_match','rate_limited')),
+        boosted_at   INTEGER DEFAULT (strftime('%s','now')),
+        FOREIGN KEY(relation_id) REFERENCES industry_relations(id) ON DELETE CASCADE
+    );
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_relation ON confidence_audit(relation_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_source_time ON confidence_audit(source, boosted_at);")
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS company_ticker_map (
+        id           INTEGER PRIMARY KEY,
+        company_name TEXT NOT NULL,
+        cik          TEXT,
+        ticker       TEXT,
+        updated_at   INTEGER DEFAULT (strftime('%s','now'))
+    );
+    """)
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ticker_map_name ON company_ticker_map(company_name);")
+
     conn.commit()
     logger.info("USCI database tables initialized.")
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str):
+    existing = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition};")
 
 # For backwards compatibility if any scripts still call init_cpo_tables
 def init_cpo_tables(conn):
