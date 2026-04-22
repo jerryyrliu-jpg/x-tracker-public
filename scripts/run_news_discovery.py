@@ -6,16 +6,13 @@ Usage:
   python scripts/run_news_discovery.py --extract --limit 20
   python scripts/run_news_discovery.py --fetch --extract --limit 100
 """
-import argparse
-import sys
+import argparse, sys, yaml
 from pathlib import Path
 
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from cpo_chain.db import get_conn, init_usci_tables
-from cpo_chain.news_article_fetcher import NewsArticleFetcher
-import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -29,34 +26,51 @@ def main():
 
     if not args.fetch and not args.extract:
         parser.error("Must specify at least one of --fetch or --extract")
+    if args.limit < 1:
+        parser.error("--limit must be >= 1")
 
     db_path = str(PROJECT_ROOT / "tweets.db")
+    keywords_path = PROJECT_ROOT / "cpo_chain" / "keywords.yaml"
+
     conn = get_conn(db_path)
     init_usci_tables(conn)
+    has_errors = False
 
-    if args.fetch:
-        print("[news-fetch] Starting article fetch...")
-        keywords_path = PROJECT_ROOT / "cpo_chain" / "keywords.yaml"
-        with open(keywords_path) as f:
-            cfg = yaml.safe_load(f)
-        root_companies = cfg.get("root_tickers") or []
-        if not root_companies:
-            print("[news-fetch] WARNING: root_tickers is empty in keywords.yaml")
-        else:
-            fetcher = NewsArticleFetcher()
-            result = fetcher.run(conn, root_companies)
-            print(f"[news-fetch] Done: {result}")
+    try:
+        if args.fetch:
+            print("[news-fetch] Starting article fetch...")
+            from cpo_chain.news_article_fetcher import NewsArticleFetcher
+            try:
+                with open(keywords_path) as f:
+                    cfg = yaml.safe_load(f)
+            except (FileNotFoundError, yaml.YAMLError) as exc:
+                print(f"[news-fetch] ERROR: Cannot read keywords.yaml: {exc}", file=sys.stderr)
+                sys.exit(1)
+            root_companies = cfg.get("root_tickers") or []
+            if not root_companies:
+                print("[news-fetch] WARNING: root_tickers is empty in keywords.yaml", file=sys.stderr)
+            else:
+                fetcher = NewsArticleFetcher()
+                result = fetcher.run(conn, root_companies)
+                print(f"[news-fetch] Done: {result}")
+                if result.get("errors", 0) > 0:
+                    has_errors = True
 
-    if args.extract:
-        print(f"[news-extract] Starting extraction (limit={args.limit})...")
-        from cpo_chain.news_extractor import NewsExtractor
-        keywords_path = str(PROJECT_ROOT / "cpo_chain" / "keywords.yaml")
-        extractor = NewsExtractor(db_path, keywords_path)
-        result = extractor.run(conn, args.limit)
-        print(f"[news-extract] Done: {result}")
+        if args.extract:
+            print(f"[news-extract] Starting extraction (limit={args.limit})...")
+            from cpo_chain.news_extractor import NewsExtractor
+            extractor = NewsExtractor(db_path, str(keywords_path))
+            result = extractor.run(conn, args.limit)
+            print(f"[news-extract] Done: {result}")
+            if result.get("errors", 0) > 0:
+                has_errors = True
 
-    conn.close()
+    finally:
+        conn.close()
+
     print("[news-discovery] Complete.")
+    if has_errors:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
