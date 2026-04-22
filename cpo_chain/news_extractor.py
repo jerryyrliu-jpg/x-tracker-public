@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import logging
+# TODO: migrate to google.genai SDK (google.generativeai is deprecated)
 import google.generativeai as genai
 from google.generativeai.types import GenerationConfig
 from .entity_resolver import EntityResolver
@@ -62,7 +63,7 @@ class NewsExtractor:
 
     def extract_from_article(self, article: dict) -> list[dict]:
         """Send article to Gemini, return list of relation dicts. Raises on error."""
-        text = f"{article['title']}. {article.get('summary', '')}"[:600]
+        text = f"{article['title'][:300]}. {article.get('summary', '')[:280]}"
         resp = self.model.generate_content(EXTRACTION_PROMPT.format(text=text))
         data = json.loads(resp.text.strip())
         return data.get("relations", [])
@@ -87,6 +88,7 @@ class NewsExtractor:
                 relations = self.extract_from_article(a)
                 base_score = SOURCE_BASE_SCORE.get(a["source"], 0.55)
                 has_relations = False
+                inner_errors = 0
 
                 for rel in relations:
                     try:
@@ -115,8 +117,8 @@ class NewsExtractor:
                             # Relation exists (from Twitter) — fetch its id for evidence
                             row = conn.execute("""
                                 SELECT id FROM industry_relations
-                                WHERE from_company_id=? AND to_company_id=?
-                            """, (from_id, to_id)).fetchone()
+                                WHERE from_company_id=? AND to_company_id=? AND role=? AND industry_context=?
+                            """, (from_id, to_id, rel.get("role", "supplier"), rel.get("industry_context", "Other"))).fetchone()
                             rel_id = row[0] if row else None
                             skipped += 1
 
@@ -127,13 +129,18 @@ class NewsExtractor:
                                 (relation_id, tweet_id, snippet, source)
                                 VALUES (?, ?, ?, 'news')
                             """, (rel_id, a["url"], a["title"][:200]))
-                        has_relations = True
+                            has_relations = True
 
                     except Exception as e:
                         logger.error(f"Relation insert error: {e}")
                         errors += 1
+                        inner_errors += 1
 
-                new_state = 1 if has_relations else 2
+                # Determine processed state
+                if inner_errors > 0 and not has_relations and relations:
+                    new_state = 3  # had relations from LLM but all failed to insert
+                else:
+                    new_state = 1 if has_relations else 2
                 conn.execute("UPDATE news_articles SET processed=? WHERE id=?",
                              (new_state, a["id"]))
                 conn.commit()
