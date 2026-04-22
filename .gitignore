@@ -10,3 +10,4 @@ venv/
 cpo_chain/output/
 *.db
 graph.html
+.worktrees/
