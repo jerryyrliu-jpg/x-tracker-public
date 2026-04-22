@@ -103,9 +103,12 @@ def load_account_config(account_name: str, base_path: Path = _DEFAULT_BASE) -> d
     return cfg
 
 def get_db_conn(db_path) -> sqlite3.Connection:
+    """Get a database connection with WAL mode and standard settings."""
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
+    conn.execute("PRAGMA foreign_keys=ON;")
     return conn
 
 async def send_discord(webhook: str, content: str = None, embeds: list[dict] = None) -> None:
