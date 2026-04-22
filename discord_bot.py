@@ -23,6 +23,8 @@ GUILD_ID = os.environ.get("DISCORD_GUILD_ID")  # set for dev (instant guild sync
 TAIPEI = timezone(timedelta(hours=8))
 DAILY_TIME_UTC = time(12, 0, tzinfo=timezone.utc)  # 20:00 Taipei
 CONFIDENCE_TIME_UTC = time(10, 0, tzinfo=timezone.utc) # 18:00 Taipei
+NEWS_FETCH_TIME_UTC = time(8, 0, tzinfo=timezone.utc)    # 16:00 Taipei
+NEWS_EXTRACT_TIME_UTC = time(8, 30, tzinfo=timezone.utc)  # 16:30 Taipei
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -162,10 +164,55 @@ async def _run_confidence_boost() -> None:
     except Exception as e:
         print(f"[confidence-boost] Error: {e}")
 
+async def _run_news_fetch() -> None:
+    """Run NewsArticleFetcher for all root companies from keywords.yaml."""
+    import yaml
+    from cpo_chain.news_article_fetcher import NewsArticleFetcher
+    from cpo_chain.db import get_conn
+    db_path = str(SCRAPER_BASE / "tweets.db")
+    try:
+        with open(SCRAPER_BASE / "cpo_chain" / "keywords.yaml") as f:
+            cfg = yaml.safe_load(f)
+        root_companies = cfg.get("root_tickers", [])
+        fetcher = NewsArticleFetcher()
+        conn = get_conn(db_path)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, fetcher.run, conn, root_companies)
+        conn.close()
+        print(f"[news-fetch] Result: {result}")
+    except Exception as e:
+        print(f"[news-fetch] Error: {e}")
+
+async def _run_news_extract() -> None:
+    """Run NewsExtractor to process unprocessed articles."""
+    from cpo_chain.news_extractor import NewsExtractor
+    from cpo_chain.db import get_conn
+    db_path = str(SCRAPER_BASE / "tweets.db")
+    keywords_path = str(SCRAPER_BASE / "cpo_chain" / "keywords.yaml")
+    try:
+        extractor = NewsExtractor(db_path, keywords_path)
+        conn = get_conn(db_path)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, extractor.run, conn, 50)
+        conn.close()
+        print(f"[news-extract] Result: {result}")
+    except Exception as e:
+        print(f"[news-extract] Error: {e}")
+
 @tasks.loop(time=CONFIDENCE_TIME_UTC)
 async def scheduled_confidence_boost():
     print(f"[scheduler] Running confidence boost at {datetime.now(TAIPEI).strftime('%Y-%m-%d %H:%M')} Taipei")
     await _run_confidence_boost()
+
+@tasks.loop(time=NEWS_FETCH_TIME_UTC)
+async def scheduled_news_fetch():
+    print(f"[scheduler] Running news fetch at {datetime.now(TAIPEI).strftime('%Y-%m-%d %H:%M')} Taipei")
+    await _run_news_fetch()
+
+@tasks.loop(time=NEWS_EXTRACT_TIME_UTC)
+async def scheduled_news_extract():
+    print(f"[scheduler] Running news extract at {datetime.now(TAIPEI).strftime('%Y-%m-%d %H:%M')} Taipei")
+    await _run_news_extract()
 
 @tasks.loop(time=DAILY_TIME_UTC)
 async def scheduled_summary():
@@ -223,6 +270,10 @@ async def on_ready():
         scheduled_summary.start()
     if not scheduled_confidence_boost.is_running():
         scheduled_confidence_boost.start()
+    if not scheduled_news_fetch.is_running():
+        scheduled_news_fetch.start()
+    if not scheduled_news_extract.is_running():
+        scheduled_news_extract.start()
 
 
 @bot.command(name="summary_test")
@@ -285,7 +336,7 @@ def format_confidence(conf: float, edgar: float, news: float) -> str:
         count = max(1, int(edgar / 0.15) if edgar < 0.3 else 3)
         sources.append(f"SEC×{count}")
     if news > 0:
-        sources.append("News×1")
+        sources.append("📰 News×1")
     
     badge = "✅ High" if conf >= 0.8 else ("📄 Mid" if conf >= 0.6 else "⚠️ Low")
     detail = f" ({', '.join(sources)})" if sources else " (Twitter only)"
