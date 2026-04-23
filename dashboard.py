@@ -91,21 +91,23 @@ with tab1:
         st.info("👆 請在左側輸入標的並點擊「開始深度分析」以繪製 K 線。")
 
 with tab2:
-    st.subheader("🕸️ Serenity 供應鏈與板塊連動圖")
-    st.markdown("基於資料庫中所有推文的 **共現分析 (Co-occurrence)**。點擊下拉選單可尋找特定節點，拖拽可移動。")
-    
+    st.subheader("🕸️ CPO 供應鏈知識圖譜")
+    st.markdown("基於推文萃取的 **供應鏈關係 (USCI)**，按 Tier 分層著色。每日自動更新。")
+
     col_a, col_b = st.columns([1, 4])
     with col_a:
-        if st.button("🔄 重新生成關聯圖"):
-            with st.spinner("正在掃描推文與計算關聯度..."):
-                subprocess.run([sys.executable, "graph_builder.py"])
-                st.success("生成完畢！")
-    
-    graph_path = SCRAPER_BASE / "graph.html"
-    if not graph_path.exists():
-        subprocess.run([sys.executable, "graph_builder.py"])
-        
-    if graph_path.exists():
-        with open(graph_path, "r", encoding="utf-8") as f:
+        if st.button("🔄 重新生成圖譜"):
+            with st.spinner("正在從資料庫重新匯出供應鏈圖譜..."):
+                subprocess.run([sys.executable, "-m", "cpo_chain.export_universal"], cwd=str(SCRAPER_BASE))
+                # Update embedded data in index.html
+                _update_script = str(SCRAPER_BASE / "scripts" / "update_network_html.py")
+                subprocess.run([sys.executable, _update_script], cwd=str(SCRAPER_BASE))
+                st.success("生成完畢！請重新整理頁面。")
+
+    network_path = SCRAPER_BASE / "cpo_chain" / "output" / "index.html"
+    if network_path.exists():
+        with open(network_path, "r", encoding="utf-8") as f:
             html_data = f.read()
-        components.html(html_data, height=650)
+        components.html(html_data, height=720, scrolling=False)
+    else:
+        st.warning("找不到 CPO Network 圖譜，請點擊「重新生成圖譜」。")
