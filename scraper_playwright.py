@@ -77,7 +77,7 @@ async def scrape():
             # 導航至帳號頁面
             await asyncio.sleep(random.uniform(1.0, 3.0))
             url = f"https://x.com/{ACCOUNT}"
-            await page.goto(url, wait_until="networkidle", timeout=60000)
+            await page.goto(url, wait_until="load", timeout=60000)
             
             # 使用 data-testid 定位推文
             try:
