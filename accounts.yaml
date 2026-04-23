@@ -7,3 +7,7 @@ accounts:
     display_name: "CKCapital"
     discord_webhook_env: "DISCORD_WEBHOOK_SERENITY"
     description: "加密貨幣/宏觀交易博主"
+  gbstocks:
+    display_name: "breakout stocks"
+    discord_webhook_env: "DISCORD_WEBHOOK_SERENITY"
+    description: "Breakout stocks 技術分析博主"
