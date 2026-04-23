@@ -1,16 +1,16 @@
 # Universal Supply Chain Intelligence (USCI) Report
 
-> Generated at: 2026-04-23 11:09:59
+> Generated at: 2026-04-24 00:41:53
 
 ## Industry: AI_Server
 
 ### Tier 0
 - **Amazon**
-- **Broadcom**
+- **Broadcom** -> Google (TPU (Tensor Processing Units) 自研晶片研發與供應合作) [⚠️ 0.55]
 - **Google**
 - **Hyperscalers**
 - **Intel**
-- **Marvell**
+- **Marvell** -> Google (合作開發 AI 晶片 (TPU)) [⚠️ 0.55]
 - **Meta**
 - **Microsoft**
 - **NVIDIA**
@@ -19,6 +19,7 @@
 
 ### Tier 1
 - **Marvell Technology** -> Google (共同開發自定義 AI 晶片 (MPU, TPU)) [⚠️ 0.55], Microsoft (供應客製化 AI 晶片 (Maia)) [⚠️ 0.55]
+- **台積電 (TSMC)** -> NVIDIA (晶片代工與產能支援) [⚠️ 0.55]
 
 ## Industry: Advanced_Packaging
 
@@ -43,7 +44,7 @@
 - **Google**
 - **Hyperscalers**
 - **Intel** -> Jabil (出售可插拔光收發器矽光子業務部門) [✅ 0.90 (SEC×2, News×1)]
-- **Marvell** -> Microsoft (ASIC Supplier (Maia Ramp)) [✅ 0.90 (SEC×2, News×1)], NVIDIA (CPO partner/investment recipient) [✅ 0.90 (SEC×2, News×1)]
+- **Marvell** -> Microsoft (ASIC Supplier (Maia Ramp)) [✅ 0.90 (SEC×2, News×1)], NVIDIA (CPO partner/investment recipient) [✅ 0.90 (SEC×2, News×1)], NVIDIA (光學互連 (DSP) 與 NVLink Fusion 客製化晶片供應商) [⚠️ 0.55]
 - **Meta**
 - **Microsoft**
 - **NVIDIA** -> Coherent (Strategic Investment / Supply Chain Security) [✅ 0.90 (SEC×2, News×1)], Lumentum (Strategic Investment / Supply Chain Security) [✅ 0.90 (SEC×2, News×1)], Lumentum (Strategic Investor/Partner) [✅ 0.90 (SEC×2, News×1)], Coherent (Strategic Investor/Partner) [✅ 0.90 (SEC×2, News×1)], Marvell (investor/partner in CPO program) [✅ 0.90 (SEC×2, News×1)]
@@ -67,13 +68,13 @@
 - **Riber** -> Microsoft (MBE equipment supplier for Quantum/SiPH lasers) [✅ 0.80 (SEC×1)]
 - **ShunSin** -> NVIDIA (CPO packaging and OSAT services) [✅ 0.80], NVIDIA (CPO packaging supplier) [✅ 0.80]
 - **Shunsin (6451)** -> NVIDIA (CPO packaging, assembly and FAU alignment) [✅ 0.80]
-- **Sivers Semiconductors** -> Jabil (CW Laser Supplier) [✅ 0.80 (News×1)], Marvell (CW Laser Supplier for CPO) [✅ 0.80 (SEC×1, News×1)], Ayar Labs (CW Laser Supplier for CPO) [✅ 0.80 (SEC×1)], WIN Semiconductors (Supply Chain Flow) [✅ 0.80], Jabil (為其下一代 1.6T 光收發器模組提供光源 (Light Source)) [✅ 0.80 (News×1)], Amazon (為 Trainium 叢集提供光源) [✅ 0.80], Microsoft (為 Maia 叢集提供光源) [✅ 0.80], Meta (可能為 MTAI 叢集提供光源) [✅ 0.80 (SEC×1)], Google (可能為 TPU 叢集提供光源) [✅ 0.80], NVIDIA (雷射光源供應鏈的關鍵瓶頸點 (Chokepoint)) [✅ 0.80 (News×1)], TTM Technologies (Laser Supplier) [✅ 0.80], Ayar Labs (Laser Supplier) [✅ 0.80 (SEC×1)], NVIDIA (Silicon Photonics Foundry / 1.6T Collaboration) [✅ 0.80 (News×1)], Marvell (light source supplier) [✅ 0.80 (SEC×1, News×1)], TTM Technologies (light source supplier) [✅ 0.80], Jabil (Light source supplier for 1.6T LRO optical transceivers) [✅ 0.80 (News×1)], Marvell (Laser supplier via Celestial AI integration) [✅ 0.80 (SEC×1, News×1)], Jabil (Laser supplier for 1.6T LRO transceivers) [✅ 0.80 (News×1)], Hyperscalers (Light source supplier) [✅ 0.80 (SEC×1, News×1)], Jabil (Laser supplier for 1.6T optical transceivers) [✅ 0.80 (News×1)], Marvell (Laser source) [✅ 0.80 (SEC×1, News×1)]
+- **Sivers Semiconductors** -> Jabil (CW Laser Supplier) [✅ 0.80 (News×1)], Marvell (CW Laser Supplier for CPO) [✅ 0.80 (SEC×1, News×1)], Ayar Labs (CW Laser Supplier for CPO) [✅ 0.80 (SEC×1, News×1)], WIN Semiconductors (Supply Chain Flow) [✅ 0.80], Jabil (為其下一代 1.6T 光收發器模組提供光源 (Light Source)) [✅ 0.80 (News×1)], Amazon (為 Trainium 叢集提供光源) [✅ 0.80], Microsoft (為 Maia 叢集提供光源) [✅ 0.80], Meta (可能為 MTAI 叢集提供光源) [✅ 0.80 (SEC×1)], Google (可能為 TPU 叢集提供光源) [✅ 0.80], NVIDIA (雷射光源供應鏈的關鍵瓶頸點 (Chokepoint)) [✅ 0.80 (News×1)], TTM Technologies (Laser Supplier) [✅ 0.80], Ayar Labs (Laser Supplier) [✅ 0.80 (SEC×1, News×1)], NVIDIA (Silicon Photonics Foundry / 1.6T Collaboration) [✅ 0.80 (News×1)], Marvell (light source supplier) [✅ 0.80 (SEC×1, News×1)], TTM Technologies (light source supplier) [✅ 0.80], Jabil (Light source supplier for 1.6T LRO optical transceivers) [✅ 0.80 (News×1)], Marvell (Laser supplier via Celestial AI integration) [✅ 0.80 (SEC×1, News×1)], Jabil (Laser supplier for 1.6T LRO transceivers) [✅ 0.80 (News×1)], Hyperscalers (Light source supplier) [✅ 0.80 (SEC×1, News×1)], Jabil (Laser supplier for 1.6T optical transceivers) [✅ 0.80 (News×1)], Marvell (Laser source) [✅ 0.80 (SEC×1, News×1)]
 - **Soitec** -> NVIDIA (基板供應鏈的關鍵瓶頸點 (Chokepoint)) [✅ 0.80 (SEC×1)]
 - **TTM Technologies** -> Marvell (Interposer/Light source supplier) [✅ 0.80 (SEC×2)]
 - **VisEra** -> TSMC (Optical foundry partner) [✅ 0.80 (SEC×2)]
 
 ### Tier 2
-- **Ayar Labs** -> Jabil (Supply Chain Flow) [✅ 0.80]
+- **Ayar Labs** -> Jabil (Supply Chain Flow) [✅ 0.80 (News×1)]
 - **IQE** -> Lumentum (Epiwafer supplier) [✅ 0.80 (SEC×2)]
 - **Plan Optik** -> Lumentum (Glass Substrate / Wafer Supplier) [✅ 0.80], Samsung (Glass Substrate Supplier) [✅ 0.80], Teledyne (Glass Wafers Supplier) [✅ 0.80]
 - **Samsung** -> Coherent (Potential Supply Mapping) [✅ 0.90 (SEC×2, News×1)]
@@ -82,6 +83,24 @@
 
 ### Tier 3
 - **WIN Semiconductors** -> Ayar Labs (Supply Chain Flow) [✅ 0.80]
+
+## Industry: HBM
+
+### Tier 0
+- **Amazon**
+- **Broadcom**
+- **Google**
+- **Hyperscalers**
+- **Intel**
+- **Marvell**
+- **Meta**
+- **Microsoft**
+- **NVIDIA**
+- **Optical Transceivers**
+- **TSMC**
+
+### Tier 1
+- **Micron** -> NVIDIA (HBM3E/HBM4 核心供應商) [⚠️ 0.55]
 
 ## Industry: Other
 
@@ -100,4 +119,5 @@
 
 ### Tier 1
 - **ASML** -> TSMC (半導體設備供應) [⚠️ 0.55]
+- **Noon Energy** -> Meta (100 GWh ultra-long-duration storage supply agreement) [⚠️ 0.55], Meta (1GW 長時儲能供應協議) [⚠️ 0.55], Meta (供應 100 GWh 的極長時能量儲存系統) [⚠️ 0.55], Meta (提供 100+ 小時長效儲能系統用於數據中心) [⚠️ 0.55]
 
