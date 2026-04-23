@@ -21,20 +21,31 @@ logger = setup_logger("Monitor", str(LOG_FILE))
 metrics = Metrics(str(METRICS_FILE))
 lock = PIDLock(str(LOCK_FILE))
 
-# 從環境變數或 config 獲取 Discord Webhook
+# 載入所有監控帳號
+def _load_all_accounts() -> list[str]:
+    import yaml
+    try:
+        with open(BASE_PATH / "accounts.yaml") as f:
+            return list(yaml.safe_load(f).get("accounts", {}).keys())
+    except Exception:
+        return ["aleabitoreddit"]
+
+ACCOUNTS = _load_all_accounts()
+
+# 心跳用 webhook（第一個帳號）
 try:
-    cfg = load_account_config("aleabitoreddit", BASE_PATH)
-    DISCORD_WEBHOOK = cfg.get("discord_webhook")
-except:
+    cfg = load_account_config(ACCOUNTS[0], BASE_PATH)
+    DISCORD_WEBHOOK = cfg.get("discord_webhook") or os.environ.get("DISCORD_WEBHOOK_SERENITY")
+except Exception:
     DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_SERENITY")
 
-async def run_scraper():
+async def run_scraper(account: str = ACCOUNTS[0]):
     """執行 Scraper 並處理結果"""
     start_time = time.time()
     try:
         # 使用 sys.executable 確保使用正確的 venv
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, str(BASE_PATH / "scraper_playwright.py"),
+            sys.executable, str(BASE_PATH / "scraper_playwright.py"), "--account", account,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
@@ -77,10 +88,15 @@ async def main():
     try:
         while True:
             run_count += 1
-            success, res = await run_scraper()
+            success = True
+            for account in ACCOUNTS:
+                ok, res = await run_scraper(account)
+                if not ok:
+                    success = False
             
             if not success:
                 fail_count += 1
+
                 if fail_count >= 3:
                     logger.warning("🚨 3 consecutive failures. Attempting Self-Healing...")
                     if RESTART_SCRIPT.exists():

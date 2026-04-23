@@ -16,8 +16,19 @@ SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
 
 DB_PATH = SCRAPER_BASE / "tweets.db"
-DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_SERENITY")
-ACCOUNT = "aleabitoreddit"
+
+import argparse as _argparse
+_parser = _argparse.ArgumentParser(add_help=False)
+_parser.add_argument("--account", default="aleabitoreddit")
+_args, _ = _parser.parse_known_args()
+ACCOUNT = _args.account
+
+from utils import load_account_config as _load_cfg
+try:
+    _cfg = _load_cfg(ACCOUNT, SCRAPER_BASE)
+    DISCORD_WEBHOOK = _cfg.get("discord_webhook") or os.environ.get("DISCORD_WEBHOOK_SERENITY")
+except Exception:
+    DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_SERENITY")
 
 async def post_to_discord(tweet):
     if not DISCORD_WEBHOOK:
