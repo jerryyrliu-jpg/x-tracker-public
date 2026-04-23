@@ -416,7 +416,12 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
             t_id = item.get("id")
             
             if tier is not None and t_val != tier: continue
-            if company and company.upper() not in t_name.upper(): continue
+            # Corrected Multi-match Logic
+            t_ticker = str(item.get("ticker", "") or "").upper()
+            if company:
+                s = company.strip().upper()
+                if s not in t_name.upper() and s != t_ticker:
+                    continue
             if country and country.upper() != (t_country or "").upper(): continue
             
             country_tag = f"[{t_country}] " if t_country else ""
@@ -425,11 +430,27 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
             # Find customers (links where this company is source)
             customers = [l for l in links if l['source'] == t_id]
             if customers:
-                cust_parts = []
+                # Deduplicate and group by target company
+                target_groups = {}
                 for l in customers:
-                    target_name = node_map.get(l['target'], {}).get('name', 'Unknown')
+                    target_id = l['target']
+                    if target_id not in target_groups:
+                        target_groups[target_id] = {'roles': [], 'best_conf': l}
+                    target_groups[target_id]['roles'].append(l.get('role', 'Partner'))
+                    if l.get('confidence', 0) > target_groups[target_id]['best_conf'].get('confidence', 0):
+                        target_groups[target_id]['best_conf'] = l
+                
+                cust_parts = []
+                for target_id, data in target_groups.items():
+                    target_node = node_map.get(target_id, {})
+                    target_name = target_node.get('name', 'Unknown')
+                    # Distinct and summarized roles
+                    unique_roles = sorted(list(set(data['roles'])))
+                    role_str = ", ".join(unique_roles)[:60]
+                    l = data['best_conf']
                     conf_str = format_confidence(l.get('confidence', 0.5), l.get('edgar_score', 0), l.get('news_score', 0))
-                    cust_parts.append(f"→ {target_name} {conf_str}")
+                    cust_parts.append(f"→ {target_name}: {role_str} {conf_str}")
+                
                 line += "\n  " + "\n  ".join(cust_parts)
                 
             results.append(line)

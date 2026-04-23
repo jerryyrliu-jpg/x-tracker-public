@@ -16,14 +16,20 @@ keywords:
 - Ayar Labs
 - Ranovus
 root_tickers:
-- NVDA
+- OPTICAL
+- HYPER
+- CSCO
 - MRVL
 - AVGO
-- INTC
-- '2330'
-- CSCO
 - LITE
+- GOOGL
 - COHR
+- AMZN
+- '2330'
+- NVDA
+- META
+- MSFT
+- INTC
 seed_aliases:
   Broadcom:
   - AVGO
