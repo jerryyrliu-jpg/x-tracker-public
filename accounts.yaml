@@ -3,7 +3,7 @@ accounts:
     display_name: "Serenity"
     discord_webhook_env: "DISCORD_WEBHOOK_SERENITY"
     description: "選股/期權分析博主，1年回報630%"
-  ckcapiralxx:
+  CKCapitalxx:
     display_name: "CKCapital"
     discord_webhook_env: "DISCORD_WEBHOOK_SERENITY"
     description: "加密貨幣/宏觀交易博主"
