@@ -481,6 +481,102 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
         traceback.print_exc()
         await interaction.followup.send("❌ 讀取 USCI 快取失敗。")
 
+@tree.command(name="chain", description="列出 CPO 供應鏈上中下游公司全景")
+@app_commands.describe(industry="產業語境 (預設 CPO)")
+async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
+    await interaction.response.defer(thinking=True)
+    db_path = SCRAPER_BASE / "tweets.db"
+    conn = get_db_conn(db_path)
+    try:
+        ctx = industry.upper()
+
+        # Layers defined by role_category on outgoing relations
+        LAYERS = [
+            ("material",    "🪨 原材料層"),
+            ("upstream",    "⚙️ 製造/元器件"),
+            ("equipment",   "🔧 設備/EDA"),
+            ("downstream",  "📦 整合/測試"),
+        ]
+
+        # Get all companies with relations in this context
+        rows = conn.execute("""
+            SELECT DISTINCT e.id, e.name, e.ticker, e.industry_tags,
+                   r.role_category,
+                   MAX(r.confidence) as max_conf
+            FROM industry_entities e
+            JOIN industry_relations r ON r.from_company_id = e.id
+            WHERE r.status='active' AND r.industry_context=?
+            GROUP BY e.id, r.role_category
+            ORDER BY r.role_category, max_conf DESC
+        """, (ctx,)).fetchall()
+
+        # Hyperscaler tier 0 companies (customers / root nodes)
+        root_rows = conn.execute("""
+            SELECT DISTINCT e.id, e.name, e.ticker
+            FROM industry_entities e
+            JOIN industry_relations r ON r.to_company_id = e.id
+            WHERE r.status='active' AND r.industry_context=?
+              AND e.id NOT IN (
+                  SELECT from_company_id FROM industry_relations
+                  WHERE status='active' AND industry_context=?
+              )
+            ORDER BY e.name
+        """, (ctx, ctx)).fetchall()
+
+        if not rows and not root_rows:
+            await interaction.followup.send(f"❌ 找不到 `{ctx}` 的供應鏈資料。")
+            return
+
+        # Group by role_category
+        from collections import defaultdict
+        groups = defaultdict(list)
+        seen = set()
+        for r in rows:
+            key = (r["id"], r["role_category"])
+            if key not in seen:
+                seen.add(key)
+                groups[r["role_category"]].append(r)
+
+        lines = [f"## 📊 {ctx} Supply Chain — 上中下游全景\n"]
+
+        for cat, label in LAYERS:
+            companies = groups.get(cat, [])
+            if not companies:
+                continue
+            parts = []
+            for c in companies[:12]:
+                ticker = c["ticker"]
+                name = c["name"]
+                conf = c["max_conf"]
+                badge = "✅" if conf >= 0.8 else ("📄" if conf >= 0.6 else "⚠️")
+                tag = f"`${ticker}`" if ticker else f"_{name}_"
+                parts.append(f"{badge} {tag}")
+            overflow = len(companies) - 12
+            line = f"**{label}**\n" + "  ".join(parts)
+            if overflow > 0:
+                line += f" _(+{overflow} more)_"
+            lines.append(line)
+
+        # Add hyperscalers
+        if root_rows:
+            h_parts = [f"`${r['ticker']}`" if r["ticker"] else f"_{r['name']}_" for r in root_rows[:8]]
+            lines.append(f"**🏢 終端客戶 (Hyperscaler)**\n" + "  ".join(h_parts))
+
+        lines.append(f"\n_資料來源: USCI DB · 使用 `/supply company:NVDA` 查詢詳細供應關係_")
+        msg = "\n\n".join(lines)
+
+        # Discord 2000 char limit
+        if len(msg) > 1950:
+            msg = msg[:1947] + "…"
+        await interaction.followup.send(msg)
+
+    except Exception:
+        import traceback; traceback.print_exc()
+        await interaction.followup.send("❌ 查詢失敗。")
+    finally:
+        conn.close()
+
+
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")
 async def stats(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
