@@ -49,6 +49,10 @@ scraper.py                     ← twscrape-based scraper (legacy, NOT called by
 | v3.7.1 | CPO Network HTML: D3.js force graph, search box, 4-category filter; embedded in dashboard tab2 |
 | v3.7.2 | Discord /chain command: upstream/midstream/downstream CPO panorama |
 | v3.7.3 | Code review fixes (Opus 4.7): role_category INSERT, ACCOUNTS guard, conn=None, XSS escape |
+| v4.1 | Multi-account: accounts.yaml enabled flag, scraper --account arg, monitor hot-reload per cycle |
+| v4.1 | CPO Network HTML: D3.js force graph, search+filter; dashboard tab2 replaced pyvis; /chain command |
+| v4.2 | Per-account daily summary (3 msgs), /account enable/disable (owner-only, atomic YAML write) |
+| v4.2.1 | Code review fixes (Opus×3, Gemini 2.5 Pro, Gemini 3.1 Pro): await fallback, escape_markdown, XSS search results, decode(errors='replace') |
 
 ---
 
