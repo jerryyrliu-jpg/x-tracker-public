@@ -613,9 +613,8 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
 ])
 async def account_toggle(interaction: discord.Interaction, action: str, name: str = ""):
     await interaction.response.defer(thinking=True, ephemeral=True)
-    # Authorization: bot owner only
-    app_info = await bot.application_info()
-    if interaction.user.id != app_info.owner.id:
+    # Authorization: bot owner only (handles both single-owner and team-owned apps)
+    if not await bot.is_owner(interaction.user):
         await interaction.followup.send("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
         return
 
@@ -664,7 +663,7 @@ async def account_toggle(interaction: discord.Interaction, action: str, name: st
         verb = "✅ 已啟用" if action == "enable" else "⏸ 已停用"
         display = accounts_cfg[name].get("display_name", name)
         await interaction.followup.send(
-            f"{verb} `@{name}` ({display})。下次 monitor 重啟後生效 — 請執行 `/pausex` 然後 `/resumex`。",
+            f"{verb} `@{name}` ({display})。將於下一輪 monitor 輪詢自動生效（最多 ~2 小時），或執行 `/pausex` 然後 `/resumex` 立即生效。",
             ephemeral=True
         )
 
