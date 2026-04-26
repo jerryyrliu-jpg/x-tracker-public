@@ -32,11 +32,14 @@ except Exception:
 
 async def post_to_discord(tweet):
     if not DISCORD_WEBHOOK:
+        print(f"⚠️ Discord: No webhook for @{ACCOUNT}", file=sys.stderr)
         return
-    msg = fr"**@{ACCOUNT}** \\\`{tweet['time']}\\\`\n{tweet['text']}\nhttps://x.com/{ACCOUNT}/status/{tweet['id']}"
+    msg = f"**@{ACCOUNT}** `{tweet['time']}`\n{tweet['text']}\nhttps://x.com/{ACCOUNT}/status/{tweet['id']}"
     async with httpx.AsyncClient() as client:
         try:
-            await client.post(DISCORD_WEBHOOK, json={"content": msg}, timeout=15)
+            r = await client.post(DISCORD_WEBHOOK, json={"content": msg}, timeout=15)
+            if r.status_code not in (200, 204):
+                print(f"⚠️ Discord HTTP {r.status_code}: {r.text[:200]}", file=sys.stderr)
         except Exception as e:
             print(f"⚠️ Discord Post Error: {e}", file=sys.stderr)
 
