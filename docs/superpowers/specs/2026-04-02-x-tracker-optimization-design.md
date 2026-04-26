@@ -1,7 +1,7 @@
 # X-Tracker Optimization Design
 
 **Date:** 2026-04-02
-**Status:** Draft — pending review
+**Status:** Living document — updated 2026-04-26
 **Project:** `/Users/yj/Desktop/PyProjects/X-tracker`
 **Context:** Post-v3.4.1 — system is stable and running. This document identifies optimization opportunities across four dimensions: feature extension, analysis quality, performance/stability, and dashboard.
 
@@ -11,21 +11,28 @@
 
 ```
 Chrome (CDP 9222)
-    └─ scraper_playwright.py   ← DOM extraction, INSERT + FTS rebuild (active path)
-         ↑ called every 15±2min
+    └─ scraper_playwright.py   ← DOM extraction, INSERT + FTS rebuild; --account arg
+         ↑ called per-account every ~2hr
 monitor_active.py              ← PID lock, metrics, self-healing, heartbeat
-    └─ tweets.db (SQLite/FTS5)
+                                  iterates all accounts in accounts.yaml
+    └─ tweets.db (SQLite/FTS5 + USCI schema)
          ├─ query_topic.py     ← FTS5 search → Gemini CLI → JSON + cache
          │    ↑ spawned by
-         └─ discord_bot.py     ← $TICKER handler, /stats
-dashboard.py (Streamlit)       ← K-line chart + co-occurrence graph
+         └─ discord_bot.py     ← $TICKER, /stats, /supply, /chain
+                                  /chain: CPO upstream/midstream/downstream view
+dashboard.py (Streamlit)       ← K-line chart + D3.js CPO Network (tab2)
 utils.py                       ← shared: DB, Discord, logger, PIDLock, Metrics
+accounts.yaml                  ← multi-account config (aleabitoreddit, CKCapitalxx, gbstocks)
+
+cpo_chain/output/index.html    ← D3.js CPO Network (search + 4-category filter)
+scripts/update_network_html.py ← regenerates index.html from USCI DB
+scripts/import_cpo_chain.py    ← one-shot: loads CPO entities + relations
+scripts/fix_cpo_tickers.py     ← one-shot: patches tickers, removes dupes, inserts relations
 
 scraper.py                     ← twscrape-based scraper (legacy, NOT called by monitor)
-                                  shares tweets.db; kept for manual/fallback use
 ```
 
-**Current data:** 398+ tweets from `@aleabitoreddit` · SQLite WAL · FTS5 content table · 3-day Gemini cache
+**Current data:** tweets from `@aleabitoreddit`, `@CKCapitalxx`, `@gbstocks` · SQLite WAL · FTS5 · USCI DB (48 CPO companies, 106 supply relations) · 3-day Gemini cache
 
 ---
 
@@ -37,6 +44,11 @@ scraper.py                     ← twscrape-based scraper (legacy, NOT called by
 | v3.4 | Active Polling: monitor_active.py, self-healing Chrome restart, jitter, metrics, heartbeat |
 | v3.5 | Resource Management: /pausex, /resumex, Chrome profile isolation, async subprocess, fr-string fix |
 | v3.4.1 | Hotfix: FTS5 not synced in scraper_playwright.py; all code-review issues patched |
+| v3.6 | Multi-account: accounts.yaml, --account CLI arg in scraper, monitor iterates all accounts |
+| v3.7 | CPO supply chain: USCI DB schema, import scripts, 48 companies / 106 relations |
+| v3.7.1 | CPO Network HTML: D3.js force graph, search box, 4-category filter; embedded in dashboard tab2 |
+| v3.7.2 | Discord /chain command: upstream/midstream/downstream CPO panorama |
+| v3.7.3 | Code review fixes (Opus 4.7): role_category INSERT, ACCOUNTS guard, conn=None, XSS escape |
 
 ---
 
@@ -57,12 +69,14 @@ To resolve resource contention between X-Tracker and manual Chrome usage, the fo
 
 ### 3.1 Feature Extension
 
-**F-1 · Multi-account Discord queries**
+**F-1 · Multi-account Discord queries** _(scraping side: ✅ done v3.6; search side: pending)_
 
-Currently `query_topic.py` defaults `--account aleabitoreddit`. A user typing `$LITE` searches only that account's tweets. The DB schema already has an `account` column — the search layer just needs to lift the constraint.
+Multi-account scraping is live: `accounts.yaml` drives the account list, `monitor_active.py` iterates all accounts, `scraper_playwright.py` accepts `--account` arg. Three accounts tracked: `aleabitoreddit`, `CKCapitalxx`, `gbstocks`.
 
-- **Proposed:** `query_topic.py` accepts `--account all` (or omit flag) → searches across all tracked accounts; results grouped by account in the Gemini prompt.
-- **Impact:** Change to `search_tweets_fts`, the prompt template, and the `discord_bot.py` subprocess command (which currently passes no `--account` flag, so defaults to single account). P-3 cache key fix is a prerequisite.
+Remaining gap: `query_topic.py` still defaults `--account aleabitoreddit`. A user typing `$LITE` searches only that account's tweets.
+
+- **Proposed:** `query_topic.py` accepts `--account all` → searches across all tracked accounts; results grouped by account in the Gemini prompt.
+- **Impact:** Change to `search_tweets_fts`, the prompt template, and the `discord_bot.py` subprocess command. P-3 cache key fix is a prerequisite.
 
 **F-2 · `$TICKER days:N` Discord shorthand**
 
@@ -209,6 +223,7 @@ Dashboard currently shows all tweets. There is no UI to filter by ticker symbol 
 
 ## 6. Open Questions
 
-1. Is multi-account (F-1) a priority, or is `@aleabitoreddit` the only account tracked for the foreseeable future?
+1. ~~Is multi-account (F-1) a priority?~~ **Resolved:** scraping is live for 3 accounts; search-side (query all accounts) is next.
 2. For Gemini (P-2): preference for keeping CLI (zero-config) vs. SDK (faster, no subprocess)?
-3. Dashboard (D-2): is the Streamlit dashboard actively used, or is Discord the primary interface?
+3. Dashboard (D-2): tab2 now shows CPO Network; is there demand for ticker search within the dashboard?
+4. CPO Network: should `cpo_chain/output/index.html` be git-tracked (remove from .gitignore) now that it's the primary UI?
