@@ -93,8 +93,8 @@ async def _run_daily_summary_for_account(account: str, display_name: str, webhoo
             if os.path.exists(out_file):
                 os.unlink(out_file)
     else:
-        print(f"[auto-daily] {account} query_topic failed: {stderr.decode()}")
-        await send_discord(webhook_url, f"⚠️ @{account} 每日摘要失敗。\n`{stderr.decode()[:200]}`")
+        print(f"[auto-daily] {account} query_topic failed: {stderr.decode(errors="replace")}")
+        await send_discord(webhook_url, f"⚠️ @{account} 每日摘要失敗。\n`{stderr.decode(errors="replace")[:200]}`")
 
 
 async def _run_daily_summary(accounts_cfg: dict, default_webhook: str) -> None:
@@ -123,7 +123,7 @@ async def _run_cpo_update() -> None:
     )
     st1, er1 = await proc1.communicate()
     if proc1.returncode != 0:
-        print(f"[usci-update] {extract_script} failed: {er1.decode()}")
+        print(f"[usci-update] {extract_script} failed: {er1.decode(errors="replace")}")
         # Fallback to keyword search if vector fails — must await to avoid race with export
         fallback = await asyncio.create_subprocess_exec(
             sys.executable, extract_script, "--limit", "100",
@@ -131,7 +131,7 @@ async def _run_cpo_update() -> None:
         )
         _, fb_er = await fallback.communicate()
         if fallback.returncode != 0:
-            print(f"[usci-update] Fallback extract failed: {fb_er.decode()}")
+            print(f"[usci-update] Fallback extract failed: {fb_er.decode(errors="replace")}")
             return
 
     # 2. Export
@@ -141,7 +141,7 @@ async def _run_cpo_update() -> None:
     )
     st2, er2 = await proc2.communicate()
     if proc2.returncode != 0:
-        print(f"[usci-update] {export_script} failed: {er2.decode()}")
+        print(f"[usci-update] {export_script} failed: {er2.decode(errors="replace")}")
         return
         
     print("[usci-update] Universal supply chain update successful.")
@@ -170,7 +170,7 @@ async def _run_monthly_summary(webhook_url: str) -> None:
         )
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
-            err = stderr.decode()[:300]
+            err = stderr.decode(errors="replace")[:300]
             print(f"[auto-monthly] {account} failed: {err}")
             await send_discord(webhook_url, f"⚠️ 月度摘要失敗 (@{account})，請查看伺服器日誌。\n`{err}`")
         else:
@@ -365,7 +365,7 @@ async def summary_prefix(ctx, days: int = 1):
         except:
             await ctx.send("讀取分析結果失敗。")
     else:
-        await ctx.send(f"分析執行失敗: {stderr.decode()[:200]}")
+        await ctx.send(f"分析執行失敗: {stderr.decode(errors="replace")[:200]}")
 
 @bot.command(name="sync")
 @commands.is_owner()
@@ -742,7 +742,7 @@ async def summary(interaction: discord.Interaction, days: int = 7):
                 os.unlink(out_file)
     else:
         if stderr:
-            print(f"Error in /summary: {stderr.decode()}")
+            print(f"Error in /summary: {stderr.decode(errors="replace")}")
         await interaction.followup.send(f"最近 {days} 天無推文資料。")
 
 
@@ -793,7 +793,7 @@ async def on_message(message):
                             os.unlink(out_file)
                 else:
                     if stderr:
-                        print(f"Error analyzing {ticker}: {stderr.decode()}")
+                        print(f"Error analyzing {ticker}: {stderr.decode(errors="replace")}")
                     await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 
@@ -844,7 +844,7 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
                 os.unlink(out_file)
     else:
         if stderr:
-            print(f"Error analyzing {ticker}: {stderr.decode()}")
+            print(f"Error analyzing {ticker}: {stderr.decode(errors="replace")}")
         await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 

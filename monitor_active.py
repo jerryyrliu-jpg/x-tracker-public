@@ -56,18 +56,18 @@ async def run_scraper(account: str = "aleabitoreddit"):
         runtime = time.time() - start_time
         if proc.returncode == 0:
             try:
-                res = json.loads(stdout.decode().strip())
+                res = json.loads(stdout.decode(errors="replace").strip())
                 metrics.report(True, runtime)
                 logger.info(f"✅ Success: New {res['new_count']} tweets ({runtime:.1f}s)")
                 return True, res
             except Exception:
-                logger.error(f"❌ JSON Parse Error: {stdout.decode()}")
+                logger.error(f"❌ JSON Parse Error: {stdout.decode(errors="replace")}")
                 metrics.report(False, runtime)
         elif proc.returncode == 2:
             logger.warning(f"⚠️ Potential structure change detected!")
             await send_discord(DISCORD_WEBHOOK, "🚨 **X-Tracker Alert**: Twitter structure change detected!")
         else:
-            logger.error(f"❌ Scraper failed (Code {proc.returncode}): {stderr.decode()}")
+            logger.error(f"❌ Scraper failed (Code {proc.returncode}): {stderr.decode(errors="replace")}")
             metrics.report(False, runtime)
             
     except asyncio.TimeoutError:
@@ -116,7 +116,7 @@ async def main():
                                 await send_discord(DISCORD_WEBHOOK, "♻️ **Self-Healing**: Chrome restarted successfully.")
                                 fail_count = 0
                             else:
-                                logger.error(f"❌ Restart script failed: {stderr.decode()}")
+                                logger.error(f"❌ Restart script failed: {stderr.decode(errors="replace")}")
                         except asyncio.TimeoutError:
                             logger.error("❌ Restart script timed out (>60s).")
                         except Exception as e:
