@@ -124,8 +124,12 @@ async def _run_cpo_update() -> None:
     st1, er1 = await proc1.communicate()
     if proc1.returncode != 0:
         print(f"[usci-update] {extract_script} failed: {er1.decode()}")
-        # Fallback to keyword search if vector fails
-        await asyncio.create_subprocess_exec(sys.executable, extract_script, "--limit", "100")
+        # Fallback to keyword search if vector fails — must await to avoid race with export
+        fallback = await asyncio.create_subprocess_exec(
+            sys.executable, extract_script, "--limit", "100",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=str(SCRAPER_BASE)
+        )
+        await fallback.communicate()
 
     # 2. Export
     proc2 = await asyncio.create_subprocess_exec(
@@ -446,7 +450,7 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
             if country and country.upper() != (t_country or "").upper(): continue
             
             country_tag = f"[{t_country}] " if t_country else ""
-            line = f"T{t_val}: {country_tag}**{t_name}**"
+            line = f"T{t_val}: {country_tag}**{discord.utils.escape_markdown(t_name)}**"
             
             # Find customers (links where this company is source)
             customers = [l for l in links if l['source'] == t_id]
@@ -470,7 +474,7 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
                     role_str = ", ".join(unique_roles)[:60]
                     l = data['best_conf']
                     conf_str = format_confidence(l.get('confidence', 0.5), l.get('edgar_score', 0), l.get('news_score', 0))
-                    cust_parts.append(f"→ {target_name}: {role_str} {conf_str}")
+                    cust_parts.append(f"→ {discord.utils.escape_markdown(target_name)}: {discord.utils.escape_markdown(role_str)} {conf_str}")
                 
                 line += "\n  " + "\n  ".join(cust_parts)
                 

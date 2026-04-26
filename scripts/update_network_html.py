@@ -346,8 +346,8 @@ HTML.write_text(f"""<!DOCTYPE html>
                     const color = tierColors[Math.min(n.tier,5)];
                     return `<div class="result-item" data-id="${{n.id}}">
                         <div class="result-dot" style="background:${{color}}"></div>
-                        <span class="result-name">${{n.name}}</span>
-                        <span class="result-ticker">${{n.ticker||""}}</span>
+                        <span class="result-name">${{esc(n.name)}}</span>
+                        <span class="result-ticker">${{esc(n.ticker||"")}}</span>
                     </div>`;
                 }}).join("");
                 resultsDiv.querySelectorAll(".result-item").forEach(el => {{
