@@ -50,13 +50,15 @@ def parse_ticker_message(raw: str) -> tuple[str, int]:
 
 
 
-async def _run_daily_summary(webhook_url: str) -> None:
-    """Call query_topic.py --summary --days 1 and send result via webhook."""
-    out_file = f"/tmp/auto_daily_{datetime.now(TAIPEI).strftime('%Y%m%d')}.json"
+async def _run_daily_summary_for_account(account: str, display_name: str, webhook_url: str) -> None:
+    """Run daily summary for a single account and send to webhook."""
+    today = datetime.now(TAIPEI).strftime("%Y-%m-%d")
+    out_file = f"/tmp/auto_daily_{account}_{datetime.now(TAIPEI).strftime('%Y%m%d')}.json"
     cmd = [
         sys.executable,
         str(SCRAPER_BASE / "query_topic.py"),
         "--summary", "--days", "1",
+        "--account", account,
         "--output", out_file,
     ]
     proc = await asyncio.create_subprocess_exec(
@@ -72,21 +74,32 @@ async def _run_daily_summary(webhook_url: str) -> None:
                 res = json.load(f)
             text = res.get("summary", "")
             if text:
-                today = datetime.now(TAIPEI).strftime("%Y-%m-%d")
-                header = f"📅 **每日摘要 ({today})**\n"
+                header = f"📅 **每日摘要 — @{account} ({display_name}) · {today}**\n"
                 for i in range(0, len(text), 1900):
                     await send_discord(webhook_url, (header if i == 0 else "") + text[i:i + 1900])
             else:
-                await send_discord(webhook_url, "⚠️ 每日摘要：今日無推文資料。")
+                await send_discord(webhook_url, f"⚠️ @{account} 每日摘要：今日無推文資料。")
         except Exception as e:
-            print(f"[auto-daily] error reading output: {e}")
+            print(f"[auto-daily] {account} error reading output: {e}")
         finally:
             if os.path.exists(out_file):
                 os.unlink(out_file)
     else:
-        msg = f"⚠️ 每日摘要失敗，請查看伺服器日誌。\n`{stderr.decode()[:300]}`"
-        print(f"[auto-daily] query_topic failed: {stderr.decode()}")
-        await send_discord(webhook_url, msg)
+        print(f"[auto-daily] {account} query_topic failed: {stderr.decode()}")
+        await send_discord(webhook_url, f"⚠️ @{account} 每日摘要失敗。\n`{stderr.decode()[:200]}`")
+
+
+async def _run_daily_summary(accounts_cfg: dict, default_webhook: str) -> None:
+    """Run daily summary for every enabled account, sending each as a separate message."""
+    for account, cfg in accounts_cfg.items():
+        if not cfg.get("enabled", True):
+            continue
+        webhook = os.environ.get(cfg.get("discord_webhook_env", ""), "") or default_webhook
+        if not webhook:
+            print(f"[auto-daily] no webhook for {account}, skipping")
+            continue
+        display = cfg.get("display_name", account)
+        await _run_daily_summary_for_account(account, display, webhook)
 
 
 
@@ -263,7 +276,7 @@ async def scheduled_summary():
         print("[scheduler] no webhook URL found, skipping.")
         return
 
-    await _run_daily_summary(webhook_url)
+    await _run_daily_summary(accounts_cfg, webhook_url)
 
     if now_taipei.day == 1:
         print("[scheduler] 1st of month — running monthly summary")
@@ -578,6 +591,54 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
     finally:
         if conn:
             conn.close()
+
+
+@tree.command(name="account", description="啟用或停用監控帳號")
+@app_commands.describe(
+    action="enable 或 disable",
+    name="帳號名稱 (不含 @)"
+)
+@app_commands.choices(action=[
+    app_commands.Choice(name="enable", value="enable"),
+    app_commands.Choice(name="disable", value="disable"),
+    app_commands.Choice(name="list", value="list"),
+])
+async def account_toggle(interaction: discord.Interaction, action: str, name: str = ""):
+    await interaction.response.defer(thinking=True)
+    yaml_path = SCRAPER_BASE / "accounts.yaml"
+    try:
+        with open(yaml_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        accounts_cfg = data.get("accounts", {})
+
+        if action == "list":
+            lines = ["**📋 監控帳號狀態**\n"]
+            for acct, cfg in accounts_cfg.items():
+                status = "✅ 啟用" if cfg.get("enabled", True) else "⏸ 停用"
+                lines.append(f"{status} `@{acct}` — {cfg.get('display_name', acct)}")
+            await interaction.followup.send("\n".join(lines))
+            return
+
+        if not name:
+            await interaction.followup.send("❌ 請指定帳號名稱，例如：`/account action:disable name:gbstocks`")
+            return
+
+        if name not in accounts_cfg:
+            available = ", ".join(f"`{k}`" for k in accounts_cfg)
+            await interaction.followup.send(f"❌ 找不到帳號 `{name}`。可用帳號：{available}")
+            return
+
+        accounts_cfg[name]["enabled"] = (action == "enable")
+        with open(yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
+
+        verb = "✅ 已啟用" if action == "enable" else "⏸ 已停用"
+        display = accounts_cfg[name].get("display_name", name)
+        await interaction.followup.send(f"{verb} `@{name}` ({display})。下次 monitor 週期生效。")
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        await interaction.followup.send(f"❌ 操作失敗：{e}")
 
 
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")

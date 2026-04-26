@@ -1,13 +1,16 @@
 accounts:
   aleabitoreddit:
+    enabled: true
     display_name: "Serenity"
     discord_webhook_env: "DISCORD_WEBHOOK_SERENITY"
     description: "選股/期權分析博主，1年回報630%"
   CKCapitalxx:
+    enabled: true
     display_name: "CKCapital"
     discord_webhook_env: "DISCORD_WEBHOOK_SERENITY"
     description: "加密貨幣/宏觀交易博主"
   gbstocks:
+    enabled: true
     display_name: "breakout stocks"
     discord_webhook_env: "DISCORD_WEBHOOK_SERENITY"
     description: "Breakout stocks 技術分析博主"

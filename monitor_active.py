@@ -26,7 +26,8 @@ def _load_all_accounts() -> list[str]:
     import yaml
     try:
         with open(BASE_PATH / "accounts.yaml") as f:
-            return list(yaml.safe_load(f).get("accounts", {}).keys())
+            cfg = yaml.safe_load(f).get("accounts", {})
+            return [k for k, v in cfg.items() if v.get("enabled", True)]
     except Exception:
         return ["aleabitoreddit"]
 
