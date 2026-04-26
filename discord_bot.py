@@ -129,7 +129,10 @@ async def _run_cpo_update() -> None:
             sys.executable, extract_script, "--limit", "100",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=str(SCRAPER_BASE)
         )
-        await fallback.communicate()
+        _, fb_er = await fallback.communicate()
+        if fallback.returncode != 0:
+            print(f"[usci-update] Fallback extract failed: {fb_er.decode()}")
+            return
 
     # 2. Export
     proc2 = await asyncio.create_subprocess_exec(
