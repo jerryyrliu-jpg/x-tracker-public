@@ -59,8 +59,9 @@ async def run_scraper(account: str = "aleabitoreddit"):
                 metrics.report(True, runtime)
                 logger.info(f"✅ Success: New {res['new_count']} tweets ({runtime:.1f}s)")
                 return True, res
-            except:
+            except Exception:
                 logger.error(f"❌ JSON Parse Error: {stdout.decode()}")
+                metrics.report(False, runtime)
         elif proc.returncode == 2:
             logger.warning(f"⚠️ Potential structure change detected!")
             await send_discord(DISCORD_WEBHOOK, "🚨 **X-Tracker Alert**: Twitter structure change detected!")
@@ -90,7 +91,8 @@ async def main():
         while True:
             run_count += 1
             success = True
-            for account in ACCOUNTS:
+            accounts = _load_all_accounts() or ["aleabitoreddit"]
+            for account in accounts:
                 ok, res = await run_scraper(account)
                 if not ok:
                     success = False

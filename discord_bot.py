@@ -1,4 +1,4 @@
-import asyncio, discord, json, os, re, sys, logging
+import asyncio, discord, json, os, re, sys, logging, tempfile
 from datetime import datetime, time, timezone, timedelta
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -10,6 +10,8 @@ from cpo_chain.news_fetcher import CompositeNewsFetcher
 from cpo_chain.company_ticker_mapper import CompanyTickerMapper
 from cpo_chain.confidence_updater import ConfidenceUpdater
 import yaml
+
+_accounts_yaml_lock = asyncio.Lock()
 
 TICKER_RE = re.compile(r'^[A-Z0-9.\-]{1,10}$')
 DAYS_RE = re.compile(r'\bdays?:(\S+)\b', re.IGNORECASE)
@@ -29,7 +31,7 @@ NEWS_EXTRACT_TIME_UTC = time(8, 30, tzinfo=timezone.utc)  # 16:30 Taipei
 intents = discord.Intents.default()
 intents.message_content = True
 logging.basicConfig(level=logging.INFO)
-bot = commands.Bot(command_prefix="$", intents=intents)
+bot = commands.Bot(command_prefix="$", intents=intents, allowed_mentions=discord.AllowedMentions.none())
 tree = bot.tree
 
 
@@ -67,7 +69,13 @@ async def _run_daily_summary_for_account(account: str, display_name: str, webhoo
         stderr=asyncio.subprocess.PIPE,
         cwd=str(SCRAPER_BASE),
     )
-    _, stderr = await proc.communicate()
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        await send_discord(webhook_url, f"⚠️ @{account} 每日摘要逾時 (>7m)，已跳過。")
+        return
     if proc.returncode == 0 and os.path.exists(out_file):
         try:
             with open(out_file, encoding="utf-8") as f:
@@ -593,7 +601,7 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
             conn.close()
 
 
-@tree.command(name="account", description="啟用或停用監控帳號")
+@tree.command(name="account", description="啟用或停用監控帳號 (僅限 Bot 擁有者)")
 @app_commands.describe(
     action="enable 或 disable",
     name="帳號名稱 (不含 @)"
@@ -604,41 +612,65 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
     app_commands.Choice(name="list", value="list"),
 ])
 async def account_toggle(interaction: discord.Interaction, action: str, name: str = ""):
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    # Authorization: bot owner only
+    app_info = await bot.application_info()
+    if interaction.user.id != app_info.owner.id:
+        await interaction.followup.send("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
+        return
+
     yaml_path = SCRAPER_BASE / "accounts.yaml"
     try:
-        with open(yaml_path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        accounts_cfg = data.get("accounts", {})
+        async with _accounts_yaml_lock:
+            with open(yaml_path, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            accounts_cfg = data.get("accounts", {})
 
-        if action == "list":
-            lines = ["**📋 監控帳號狀態**\n"]
-            for acct, cfg in accounts_cfg.items():
-                status = "✅ 啟用" if cfg.get("enabled", True) else "⏸ 停用"
-                lines.append(f"{status} `@{acct}` — {cfg.get('display_name', acct)}")
-            await interaction.followup.send("\n".join(lines))
-            return
+            if action == "list":
+                if not accounts_cfg:
+                    await interaction.followup.send("⚠️ 尚無帳號設定。", ephemeral=True)
+                    return
+                lines = ["**📋 監控帳號狀態**\n"]
+                for acct, cfg in accounts_cfg.items():
+                    status = "✅ 啟用" if cfg.get("enabled", True) else "⏸ 停用"
+                    lines.append(f"{status} `@{acct}` — {cfg.get('display_name', acct)}")
+                await interaction.followup.send("\n".join(lines), ephemeral=True)
+                return
 
-        if not name:
-            await interaction.followup.send("❌ 請指定帳號名稱，例如：`/account action:disable name:gbstocks`")
-            return
+            if not name:
+                await interaction.followup.send("❌ 請指定帳號名稱，例如：`/account action:disable name:gbstocks`", ephemeral=True)
+                return
 
-        if name not in accounts_cfg:
-            available = ", ".join(f"`{k}`" for k in accounts_cfg)
-            await interaction.followup.send(f"❌ 找不到帳號 `{name}`。可用帳號：{available}")
-            return
+            if name not in accounts_cfg:
+                available = ", ".join(f"`{k}`" for k in accounts_cfg)
+                await interaction.followup.send(f"❌ 找不到帳號 `{name}`。可用帳號：{available}", ephemeral=True)
+                return
 
-        accounts_cfg[name]["enabled"] = (action == "enable")
-        with open(yaml_path, "w", encoding="utf-8") as f:
-            yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
+            accounts_cfg[name]["enabled"] = (action == "enable")
+
+            # Atomic write: write to temp then replace
+            fd, tmp_path = tempfile.mkstemp(dir=str(yaml_path.parent), prefix=".accounts.", suffix=".yaml")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, yaml_path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
 
         verb = "✅ 已啟用" if action == "enable" else "⏸ 已停用"
         display = accounts_cfg[name].get("display_name", name)
-        await interaction.followup.send(f"{verb} `@{name}` ({display})。下次 monitor 週期生效。")
+        await interaction.followup.send(
+            f"{verb} `@{name}` ({display})。下次 monitor 重啟後生效 — 請執行 `/pausex` 然後 `/resumex`。",
+            ephemeral=True
+        )
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        await interaction.followup.send(f"❌ 操作失敗：{e}")
+        await interaction.followup.send(f"❌ 操作失敗：{e}", ephemeral=True)
 
 
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")
