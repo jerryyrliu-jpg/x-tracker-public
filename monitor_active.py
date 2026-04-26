@@ -30,7 +30,7 @@ def _load_all_accounts() -> list[str]:
     except Exception:
         return ["aleabitoreddit"]
 
-ACCOUNTS = _load_all_accounts()
+ACCOUNTS = _load_all_accounts() or ["aleabitoreddit"]
 
 # 心跳用 webhook（第一個帳號）
 try:
@@ -39,7 +39,7 @@ try:
 except Exception:
     DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_SERENITY")
 
-async def run_scraper(account: str = ACCOUNTS[0]):
+async def run_scraper(account: str = "aleabitoreddit"):
     """執行 Scraper 並處理結果"""
     start_time = time.time()
     try:

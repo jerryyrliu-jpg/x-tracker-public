@@ -245,6 +245,7 @@ HTML.write_text(f"""<!DOCTYPE html>
             .text(d => d.ticker ? `${{d.name}} (${{d.ticker}})` : d.name);
 
         // Tooltip
+        const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
         const tooltip = d3.select("#tooltip");
         node.on("mouseover", (e, d) => {{
             const connected = new Set();
@@ -252,13 +253,13 @@ HTML.write_text(f"""<!DOCTYPE html>
                 if (l.source.id===d.id) connected.add(l.target.id + ":out:" + l.role);
                 if (l.target.id===d.id) connected.add(l.source.id + ":in:" + l.role);
             }});
-            const inLinks  = links.filter(l => l.target.id===d.id).map(l=>`← ${{l.source.name}}`);
-            const outLinks = links.filter(l => l.source.id===d.id).map(l=>`→ ${{l.target.name}}`);
+            const inLinks  = links.filter(l => l.target.id===d.id).map(l=>`← ${{esc(l.source.name)}}`);
+            const outLinks = links.filter(l => l.source.id===d.id).map(l=>`→ ${{esc(l.target.name)}}`);
             const lines = [
-                `<strong>${{d.name}}</strong>`,
-                d.ticker ? `Ticker: ${{d.ticker}}` : "",
+                `<strong>${{esc(d.name)}}</strong>`,
+                d.ticker ? `Ticker: ${{esc(d.ticker)}}` : "",
                 `Tier: ${{d.tier}}`,
-                d.tags ? `Tags: ${{d.tags}}` : "",
+                d.tags ? `Tags: ${{esc(d.tags)}}` : "",
                 inLinks.length  ? `<br>⬅ 客戶: ${{inLinks.slice(0,3).join(", ")}}${{inLinks.length>3?" …":""}}` : "",
                 outLinks.length ? `<br>➡ 供應: ${{outLinks.slice(0,3).join(", ")}}${{outLinks.length>3?" …":""}}` : "",
             ].filter(Boolean);

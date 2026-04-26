@@ -486,16 +486,18 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
 async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
     await interaction.response.defer(thinking=True)
     db_path = SCRAPER_BASE / "tweets.db"
-    conn = get_db_conn(db_path)
+    conn = None
     try:
+        conn = get_db_conn(db_path)
         ctx = industry.upper()
 
         # Layers defined by role_category on outgoing relations
         LAYERS = [
             ("material",    "🪨 原材料層"),
             ("upstream",    "⚙️ 製造/元器件"),
+            ("midstream",   "🔄 中游/整合"),
             ("equipment",   "🔧 設備/EDA"),
-            ("downstream",  "📦 整合/測試"),
+            ("downstream",  "📦 模組/封裝"),
         ]
 
         # Get all companies with relations in this context
@@ -574,7 +576,8 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
         import traceback; traceback.print_exc()
         await interaction.followup.send("❌ 查詢失敗。")
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")

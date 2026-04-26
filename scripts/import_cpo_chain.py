@@ -60,57 +60,57 @@ ENTITIES = [
 ]
 
 RELATIONS = [
-    # (supplier_ticker, customer_ticker, role, confidence)
+    # (supplier_ticker, customer_ticker, role, confidence, role_category)
     # Layer 1 → Layer 7 (InP substrate to laser makers)
-    ("AXTI", "AAOI", "InP substrate supplier for laser production", 0.85),
-    ("AXTI", "LITE", "InP substrate supplier for EML lasers", 0.85),
-    ("AXTI", "COHR", "InP substrate supplier for EML lasers", 0.80),
-    ("AXTI", "SIVE", "InP substrate supplier for DFB lasers", 0.80),
+    ("AXTI", "AAOI", "InP substrate supplier for laser production", 0.85, "material"),
+    ("AXTI", "LITE", "InP substrate supplier for EML lasers", 0.85, "material"),
+    ("AXTI", "COHR", "InP substrate supplier for EML lasers", 0.80, "material"),
+    ("AXTI", "SIVE", "InP substrate supplier for DFB lasers", 0.80, "material"),
     # Layer 2 → Layer 1
-    ("SHECY", "AXTI", "pBN crucible and B2O3 feedstock for InP reactors", 0.70),
+    ("SHECY", "AXTI", "pBN crucible and B2O3 feedstock for InP reactors", 0.70, "material"),
     # Layer 3 → Layer 5 (SOI wafer to SiPh foundries)
-    ("SOITF", "TSEM", "Photonic-SOI wafer supplier for silicon photonics", 0.85),
-    ("SOITF", "GFS", "Photonic-SOI wafer supplier for silicon photonics", 0.80),
+    ("SOITF", "TSEM", "Photonic-SOI wafer supplier for silicon photonics", 0.85, "material"),
+    ("SOITF", "GFS", "Photonic-SOI wafer supplier for silicon photonics", 0.80, "material"),
     # Layer 4 → Layer 7 (Compound semi foundry to laser makers)
-    ("WIN", "AAOI", "InP/GaAs compound semiconductor foundry", 0.80),
-    ("WIN", "LITE", "InP/GaAs compound semiconductor foundry", 0.75),
-    ("WIN", "SIVE", "InP/GaAs foundry for DFB laser dies", 0.75),
-    ("WIN", "AVGO", "GaAs foundry partner (AVGO holds ~5% stake)", 0.85),
+    ("WIN", "AAOI", "InP/GaAs compound semiconductor foundry", 0.80, "upstream"),
+    ("WIN", "LITE", "InP/GaAs compound semiconductor foundry", 0.75, "upstream"),
+    ("WIN", "SIVE", "InP/GaAs foundry for DFB laser dies", 0.75, "upstream"),
+    ("WIN", "AVGO", "GaAs foundry partner (AVGO holds ~5% stake)", 0.85, "upstream"),
     # Layer 5 → Hyperscalers (SiPh foundry to end customers)
-    ("TSEM", "NVDA", "Silicon photonics foundry, 1.6T CPO collaboration", 0.90),
-    ("GFS", "MRVL", "Silicon photonics foundry partner", 0.75),
+    ("TSEM", "NVDA", "Silicon photonics foundry, 1.6T CPO collaboration", 0.90, "upstream"),
+    ("GFS", "MRVL", "Silicon photonics foundry partner", 0.75, "upstream"),
     # Layer 6 (EDA to foundries)
-    ("CDNS", "TSEM", "EDA tools for photonic IC design", 0.70),
-    ("SNPS", "GFS", "EDA and multiphysics simulation for SiPh", 0.70),
+    ("CDNS", "TSEM", "EDA tools for photonic IC design", 0.70, "equipment"),
+    ("SNPS", "GFS", "EDA and multiphysics simulation for SiPh", 0.70, "equipment"),
     # Layer 7 → Hyperscalers (Lasers to customers)
-    ("AAOI", "NVDA", "CW/DFB laser supplier for CPO modules", 0.85),
-    ("AAOI", "MSFT", "Laser supplier — hyperscaler capacity booking", 0.80),
-    ("AAOI", "GOOGL", "Laser supplier — hyperscaler capacity booking", 0.80),
-    ("LITE", "NVDA", "EML laser supplier for 1.6T optical modules", 0.85),
-    ("LITE", "MRVL", "Laser and optical component supplier", 0.80),
-    ("COHR", "NVDA", "EML laser supplier for CPO", 0.80),
-    ("SIVE", "MRVL", "DFB laser supplier for 1.6T LRO modules", 0.85),
-    ("SIVE", "FN", "DFB laser dies for Fabrinet module assembly", 0.75),
+    ("AAOI", "NVDA", "CW/DFB laser supplier for CPO modules", 0.85, "upstream"),
+    ("AAOI", "MSFT", "Laser supplier — hyperscaler capacity booking", 0.80, "upstream"),
+    ("AAOI", "GOOGL", "Laser supplier — hyperscaler capacity booking", 0.80, "upstream"),
+    ("LITE", "NVDA", "EML laser supplier for 1.6T optical modules", 0.85, "upstream"),
+    ("LITE", "MRVL", "Laser and optical component supplier", 0.80, "upstream"),
+    ("COHR", "NVDA", "EML laser supplier for CPO", 0.80, "upstream"),
+    ("SIVE", "MRVL", "DFB laser supplier for 1.6T LRO modules", 0.85, "upstream"),
+    ("SIVE", "FN", "DFB laser dies for Fabrinet module assembly", 0.75, "upstream"),
     # Layer 8 → Hyperscalers (DSP/Network chips)
-    ("MRVL", "NVDA", "Optical DSP and custom AI chip (CPO partner)", 0.85),
-    ("MRVL", "MSFT", "Custom AI chip (Maia) supplier", 0.85),
-    ("MRVL", "GOOGL", "Custom AI chip (TPU co-development)", 0.85),
-    ("AVGO", "NVDA", "Optical DSP and network switch ASIC", 0.80),
-    ("AVGO", "MSFT", "Network/optical components", 0.75),
+    ("MRVL", "NVDA", "Optical DSP and custom AI chip (CPO partner)", 0.85, "upstream"),
+    ("MRVL", "MSFT", "Custom AI chip (Maia) supplier", 0.85, "upstream"),
+    ("MRVL", "GOOGL", "Custom AI chip (TPU co-development)", 0.85, "upstream"),
+    ("AVGO", "NVDA", "Optical DSP and network switch ASIC", 0.80, "upstream"),
+    ("AVGO", "MSFT", "Network/optical components", 0.75, "upstream"),
     # Layer 9 → Layer 5 (Test to SiPh foundries)
-    ("AEHR", "TSEM", "Wafer-level burn-in testing for silicon photonics", 0.85),
-    ("ONTO", "GLW", "Glass core substrate metrology partner (LIDE)", 0.80),
+    ("AEHR", "TSEM", "Wafer-level burn-in testing for silicon photonics", 0.85, "equipment"),
+    ("ONTO", "GLW", "Glass core substrate metrology partner (LIDE)", 0.80, "equipment"),
     # Layer 10 → Hyperscalers (Module assembly)
-    ("FN", "NVDA", "Optical module EMS — ~35% revenue from NVIDIA", 0.90),
-    ("6451", "NVDA", "CPO packaging and module assembly (Foxconn subsidiary)", 0.80),
-    ("6451", "MRVL", "CPO module packaging partner", 0.75),
+    ("FN", "NVDA", "Optical module EMS — ~35% revenue from NVIDIA", 0.90, "downstream"),
+    ("6451", "NVDA", "CPO packaging and module assembly (Foxconn subsidiary)", 0.80, "downstream"),
+    ("6451", "MRVL", "CPO module packaging partner", 0.75, "downstream"),
     # Layer 11 → Layer 10 (OSAT to module)
-    ("ASX", "NVDA", "Advanced packaging for CPO mass production", 0.80),
+    ("ASX", "NVDA", "Advanced packaging for CPO mass production", 0.80, "downstream"),
     # Layer 12 → Hyperscalers (Fiber/glass)
-    ("GLW", "META", "Optical fiber supplier — $6B contract", 0.95),
-    ("GLW", "NVDA", "Fiber and glass core substrate supplier", 0.75),
-    ("LPKK", "GLW", "LIDE glass substrate technology partner", 0.75),
-    ("LPKK", "ONTO", "Glass core substrate co-development (metrology)", 0.80),
+    ("GLW", "META", "Optical fiber supplier — $6B contract", 0.95, "upstream"),
+    ("GLW", "NVDA", "Fiber and glass core substrate supplier", 0.75, "upstream"),
+    ("LPKK", "GLW", "LIDE glass substrate technology partner", 0.75, "equipment"),
+    ("LPKK", "ONTO", "Glass core substrate co-development (metrology)", 0.80, "equipment"),
 ]
 
 def run():
@@ -139,7 +139,7 @@ def run():
 
     added_rel = 0
     skipped_rel = 0
-    for sup_ticker, cust_ticker, role, conf in RELATIONS:
+    for sup_ticker, cust_ticker, role, conf, role_cat in RELATIONS:
         sup_id = ticker_map.get(sup_ticker)
         cust_id = ticker_map.get(cust_ticker)
         if not sup_id or not cust_id:
@@ -148,9 +148,9 @@ def run():
             continue
         cur = conn.execute("""
             INSERT OR IGNORE INTO industry_relations
-            (from_company_id, to_company_id, role, industry_context, confidence, status)
-            VALUES (?,?,?,'CPO',?,'active')
-        """, (sup_id, cust_id, role, conf))
+            (from_company_id, to_company_id, role, role_category, industry_context, confidence, status)
+            VALUES (?,?,?,?,'CPO',?,'active')
+        """, (sup_id, cust_id, role, role_cat, conf))
         if cur.rowcount > 0:
             added_rel += 1
         else:
