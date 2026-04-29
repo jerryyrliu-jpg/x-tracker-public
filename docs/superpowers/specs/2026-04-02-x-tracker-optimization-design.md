@@ -1,7 +1,7 @@
 # X-Tracker Optimization Design
 
 **Date:** 2026-04-02
-**Status:** Living document — updated 2026-04-26
+**Status:** Living document — updated 2026-04-29 (v4.4.1)
 **Project:** `/Users/yj/Desktop/PyProjects/X-tracker`
 **Context:** Post-v3.4.1 — system is stable and running. This document identifies optimization opportunities across four dimensions: feature extension, analysis quality, performance/stability, and dashboard.
 
@@ -53,6 +53,9 @@ scraper.py                     ← twscrape-based scraper (legacy, NOT called by
 | v4.1 | CPO Network HTML: D3.js force graph, search+filter; dashboard tab2 replaced pyvis; /chain command |
 | v4.2 | Per-account daily summary (3 msgs), /account enable/disable (owner-only, atomic YAML write) |
 | v4.2.1 | Code review fixes (Opus×3, Gemini 2.5 Pro, Gemini 3.1 Pro): await fallback, escape_markdown, XSS search results, decode(errors='replace') |
+| v4.3 | All P0/P1 optimizations confirmed complete: Path(__file__) in query_topic + monthly_summary, cache key account:topic:days, Discord typing indicator ($TICKER), /stats get_db_conn, $TICKER days:N shorthand, FTS5 porter tokenizer + auto-migration, /stats per-account count + last scraped, Gemini prompt 今日 date context + weekly tweet grouping |
+| v4.4 | P2 features: multi-account search (--account all, cross-account prompt grouping), 5-class sentiment (StrongBullish/Bullish/Neutral/Bearish/StrongBearish), dashboard auto-refresh toggle (60s), dashboard Path(__file__) fix, StrongBullish/StrongBearish larger K-line arrows |
+| v4.4.1 | Code review fixes (Opus 4.7): str(example_id) in both prompt builders (H2), meta-refresh replaces time.sleep+st.rerun (H3), _run_gemini() helper extracted + analyze_topic_weighted dead code removed (M1), logger.warning in search_all_accounts_fts (M2), yaml import hoisted + except-bare fixed in dashboard (M3), subprocess timeout+returncode in dashboard (M4), tempfile replaces /tmp/topic_res_v3.json (M5), _MAX_TWEETS_PER_ACCOUNT=100 cap in multi-account prompt (M6), empty s_map warning (M7) |
 
 ---
 
@@ -196,17 +199,17 @@ Dashboard currently shows all tweets. There is no UI to filter by ticker symbol 
 
 | Priority | Item | Effort | Value |
 |----------|------|--------|-------|
-| P0 | P-4 · `Path(__file__)` in query_topic + monthly_summary | XS | Required before F-3, launchd |
-| P0 | P-3 · Cache key `account:topic:days` | XS | Required before F-1 and F-2 |
-| P0 | Q-1 · Discord typing indicator | XS | Immediate UX win |
-| P0 | Q-4 · `/stats` use `get_db_conn` | XS | Consistency |
-| P1 | F-2 · `$TICKER days:N` | XS | UX win |
-| P1 | Q-2 · FTS5 porter tokenizer | XS | Better recall |
-| P1 | Q-3 · `/stats` enrichment | XS | More useful |
-| P1 | A-1 · Richer prompt (date context) | XS | Easy quality win |
-| P2 | F-1 · Multi-account search | S | Core feature gap |
-| P2 | A-2 · 5-class sentiment | S | Better signal |
-| P2 | D-1 · Dashboard auto-refresh | XS | Polish |
+| ✅ Done | P-4 · `Path(__file__)` in query_topic + monthly_summary | XS | Required before F-3, launchd |
+| ✅ Done | P-3 · Cache key `account:topic:days` | XS | Required before F-1 and F-2 |
+| ✅ Done | Q-1 · Discord typing indicator | XS | Immediate UX win |
+| ✅ Done | Q-4 · `/stats` use `get_db_conn` | XS | Consistency |
+| ✅ Done | F-2 · `$TICKER days:N` | XS | UX win |
+| ✅ Done | Q-2 · FTS5 porter tokenizer | XS | Better recall |
+| ✅ Done | Q-3 · `/stats` enrichment | XS | More useful |
+| ✅ Done | A-1 · Richer prompt (date context) | XS | Easy quality win |
+| ✅ Done | F-1 · Multi-account search | S | Core feature gap |
+| ✅ Done | A-2 · 5-class sentiment | S | Better signal |
+| ✅ Done | D-1 · Dashboard auto-refresh | XS | Polish |
 | P3 | P-2 · Gemini SDK (remove subprocess) | M | Latency + reliability |
 | P3 | F-3 · Scheduled monthly summary | S | Nice-to-have (needs P-4 first) |
 | P3 | D-2 · Topic search in dashboard | M | Convenience |

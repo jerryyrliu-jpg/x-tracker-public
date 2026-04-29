@@ -762,6 +762,7 @@ async def on_message(message):
                 sys.executable,
                 str(SCRAPER_BASE / "query_topic.py"),
                 ticker,
+                "--account", "all",
                 "--days", str(days),
                 "--output", out_file,
             ]
@@ -814,6 +815,7 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         sys.executable,
         str(SCRAPER_BASE / "query_topic.py"),
         ticker,
+        "--account", "all",
         "--days", str(days),
         "--output", out_file,
     ]
@@ -846,6 +848,7 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         if stderr:
             print(f"Error analyzing {ticker}: {stderr.decode(errors="replace")}")
         await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
+
 
 
 
