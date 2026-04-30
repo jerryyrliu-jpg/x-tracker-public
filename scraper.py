@@ -64,8 +64,8 @@ def init_db(db_path=None):
             "USING fts5(text, content='tweets', content_rowid='rowid', "
             "tokenize='porter unicode61')"
         )
-    except sqlite3.OperationalError:
-        pass
+    except sqlite3.OperationalError as e:
+        print(f"Warning: could not create tweets_fts ({e}); FTS search may be unavailable.", file=sys.stderr)
     migrate_fts_tokenizer(conn)
     _ensure_fts_triggers(conn)
     conn.commit()

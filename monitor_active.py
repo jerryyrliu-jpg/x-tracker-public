@@ -20,23 +20,27 @@ metrics = Metrics(str(METRICS_FILE))
 lock = PIDLock(str(LOCK_FILE))
 
 # 載入所有監控帳號
+_DEFAULT_ACCOUNT = "aleabitoreddit"
+
+
 def _load_all_accounts() -> list[str]:
     import yaml
     try:
-        with open(BASE_PATH / "accounts.yaml") as f:
+        with open(BASE_PATH / "accounts.yaml", encoding="utf-8") as f:
             cfg = (yaml.safe_load(f) or {}).get("accounts", {})
             return [k for k, v in cfg.items() if v.get("enabled", True)]
     except Exception as e:
-        logger.error(f"Failed to load accounts.yaml: {e}; falling back to aleabitoreddit")
-        return ["aleabitoreddit"]
+        logger.error(f"Failed to load accounts.yaml: {e}; falling back to {_DEFAULT_ACCOUNT}")
+        return [_DEFAULT_ACCOUNT]
 
-ACCOUNTS = _load_all_accounts() or ["aleabitoreddit"]
+ACCOUNTS = _load_all_accounts() or [_DEFAULT_ACCOUNT]
 
 # 心跳用 webhook（第一個帳號）
 try:
     cfg = load_account_config(ACCOUNTS[0], BASE_PATH)
     DISCORD_WEBHOOK = cfg.get("discord_webhook") or os.environ.get("DISCORD_WEBHOOK_SERENITY")
-except Exception:
+except Exception as e:
+    logger.warning(f"Could not load webhook config for {ACCOUNTS[0]}: {e}")
     DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_SERENITY")
 
 _MONTHLY_STAMP = BASE_PATH / ".last_monthly_summary"
@@ -61,7 +65,7 @@ async def run_monthly_summary_if_due():
         stamped = ""
     if stamped == month_str:
         return
-    accounts = _load_all_accounts() or ["aleabitoreddit"]
+    accounts = _load_all_accounts() or [_DEFAULT_ACCOUNT]
     logger.info(f"📊 Running monthly summary for {month_str}...")
     any_success = False
     for account in accounts:
@@ -72,11 +76,11 @@ async def run_monthly_summary_if_due():
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=_MONTHLY_TIMEOUT)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_MONTHLY_TIMEOUT)
             if proc.returncode != 0:
                 logger.error(f"Monthly summary failed for {account}: {stderr.decode(errors='replace')}")
             else:
-                logger.info(f"✅ Monthly summary done for {account}")
+                logger.info(f"✅ Monthly summary done for {account}: {stdout.decode(errors='replace')[:200]}")
                 any_success = True
         except asyncio.TimeoutError:
             logger.error(f"Monthly summary timed out for {account}")
@@ -138,7 +142,7 @@ async def main():
             run_count += 1
             success = True
             await run_monthly_summary_if_due()
-            accounts = _load_all_accounts() or ["aleabitoreddit"]
+            accounts = _load_all_accounts() or [_DEFAULT_ACCOUNT]
             for account in accounts:
                 ok, res = await run_scraper(account)
                 if not ok:

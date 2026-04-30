@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import httpx
 import sys
@@ -26,7 +27,8 @@ from utils import load_account_config as _load_cfg
 try:
     _cfg = _load_cfg(ACCOUNT, SCRAPER_BASE)
     DISCORD_WEBHOOK = _cfg.get("discord_webhook") or os.environ.get("DISCORD_WEBHOOK_SERENITY")
-except Exception:
+except Exception as e:
+    print(f"Warning: could not load account config for {ACCOUNT}: {e}", file=sys.stderr)
     DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_SERENITY")
 
 async def post_to_discord(tweet):

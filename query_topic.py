@@ -122,12 +122,12 @@ def build_prompt_multi_account(topic: str, tweets_by_account: dict) -> str:
 def search_all_accounts_fts(conn, topic: str, days: int) -> dict:
     """Search topic across all enabled accounts. Returns {account: [rows]}."""
     try:
-        with open(SCRAPER_BASE / "accounts.yaml") as f:
+        with open(SCRAPER_BASE / "accounts.yaml", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
         accounts = [k for k, v in cfg.get("accounts", {}).items() if v.get("enabled", True)]
     except (OSError, yaml.YAMLError) as e:
         logger.warning("Failed to load accounts.yaml, falling back to default: %s", e)
-        accounts = ["aleabitoreddit"]
+        accounts = [_DEFAULT_ACCOUNT]
     return {
         acct: rows
         for acct in accounts
@@ -136,6 +136,7 @@ def search_all_accounts_fts(conn, topic: str, days: int) -> dict:
 
 
 _GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+_DEFAULT_ACCOUNT = "aleabitoreddit"
 
 
 def _run_gemini_cli(prompt: str, timeout: int = 300) -> str:
@@ -144,10 +145,10 @@ def _run_gemini_cli(prompt: str, timeout: int = 300) -> str:
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout)
     except subprocess.TimeoutExpired:
-        print("Gemini CLI call timed out.", file=sys.stderr)
+        logger.warning("Gemini CLI call timed out.")
         return ""
     if res.returncode != 0 or not res.stdout.strip():
-        print(f"Gemini CLI call failed: {res.stderr}", file=sys.stderr)
+        logger.warning("Gemini CLI call failed: %s", res.stderr)
         return ""
     return res.stdout
 
@@ -157,11 +158,11 @@ def _run_gemini_sdk(prompt: str, timeout: int = 300) -> str:
     try:
         import google.generativeai as genai
     except ImportError:
-        print("google-generativeai not installed; falling back to CLI.", file=sys.stderr)
+        logger.warning("google-generativeai not installed; falling back to CLI.")
         return _run_gemini_cli(prompt, timeout)
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        print("GEMINI_API_KEY not set; falling back to CLI.", file=sys.stderr)
+        logger.warning("GEMINI_API_KEY not set; falling back to CLI.")
         return _run_gemini_cli(prompt, timeout)
     try:
         genai.configure(api_key=api_key)
@@ -171,10 +172,10 @@ def _run_gemini_sdk(prompt: str, timeout: int = 300) -> str:
             request_options={"timeout": timeout},
         )
         if not response.candidates:
-            print("Gemini SDK: no candidates (safety block?); falling back to CLI.", file=sys.stderr)
+            logger.warning("Gemini SDK: no candidates (safety block?); falling back to CLI.")
             return _run_gemini_cli(prompt, timeout)
         return response.text or ""
-    except Exception as e:
+    except Exception:
         logger.exception("Gemini SDK call failed; falling back to CLI.")
         return _run_gemini_cli(prompt, timeout)
 
