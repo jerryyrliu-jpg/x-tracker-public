@@ -135,18 +135,60 @@ def search_all_accounts_fts(conn, topic: str, days: int) -> dict:
     }
 
 
-def _run_gemini(prompt: str, timeout: int = 300) -> str:
-    """Run Gemini CLI. Returns stdout or '' on failure."""
-    cmd = ["gemini", "--model", "gemini-2.5-flash-lite", "-p", prompt]
+_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+
+
+def _run_gemini_cli(prompt: str, timeout: int = 300) -> str:
+    """Run Gemini via CLI subprocess."""
+    cmd = ["gemini", "--model", _GEMINI_MODEL, "-p", prompt]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout)
     except subprocess.TimeoutExpired:
-        print("Gemini call timed out.", file=sys.stderr)
+        print("Gemini CLI call timed out.", file=sys.stderr)
         return ""
     if res.returncode != 0 or not res.stdout.strip():
-        print(f"Gemini call failed: {res.stderr}", file=sys.stderr)
+        print(f"Gemini CLI call failed: {res.stderr}", file=sys.stderr)
         return ""
     return res.stdout
+
+
+def _run_gemini_sdk(prompt: str, timeout: int = 300) -> str:
+    """Run Gemini via google-generativeai SDK. Falls back to CLI if unavailable."""
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        print("google-generativeai not installed; falling back to CLI.", file=sys.stderr)
+        return _run_gemini_cli(prompt, timeout)
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("GEMINI_API_KEY not set; falling back to CLI.", file=sys.stderr)
+        return _run_gemini_cli(prompt, timeout)
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(_GEMINI_MODEL)
+        response = model.generate_content(
+            prompt,
+            request_options={"timeout": timeout},
+        )
+        return response.text or ""
+    except Exception as e:
+        print(f"Gemini SDK call failed: {e}; falling back to CLI.", file=sys.stderr)
+        return _run_gemini_cli(prompt, timeout)
+
+
+def _run_gemini(prompt: str, timeout: int = 300) -> str:
+    """Route to SDK or CLI based on GEMINI_BACKEND env var.
+
+    GEMINI_BACKEND=sdk  — use SDK (requires GEMINI_API_KEY); falls back to CLI on error
+    GEMINI_BACKEND=cli  — always use CLI subprocess
+    GEMINI_BACKEND=auto — SDK if GEMINI_API_KEY is set, else CLI (default)
+    """
+    backend = os.getenv("GEMINI_BACKEND", "auto").lower()
+    if backend == "cli":
+        return _run_gemini_cli(prompt, timeout)
+    if backend == "sdk" or (backend == "auto" and os.getenv("GEMINI_API_KEY")):
+        return _run_gemini_sdk(prompt, timeout)
+    return _run_gemini_cli(prompt, timeout)
 
 
 def get_recent_tweets(conn, days: int, account: str = "aleabitoreddit") -> list:

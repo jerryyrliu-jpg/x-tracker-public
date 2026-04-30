@@ -67,11 +67,33 @@ def init_db(db_path=None):
     except sqlite3.OperationalError:
         pass
     migrate_fts_tokenizer(conn)
+    _ensure_fts_triggers(conn)
     conn.commit()
     return conn
 
 
+def _ensure_fts_triggers(conn):
+    """Add incremental FTS5 sync triggers if not present."""
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS tweets_fts_ai AFTER INSERT ON tweets BEGIN
+            INSERT INTO tweets_fts(rowid, text) VALUES (new.rowid, new.text);
+        END
+    """)
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS tweets_fts_ad AFTER DELETE ON tweets BEGIN
+            INSERT INTO tweets_fts(tweets_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+        END
+    """)
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS tweets_fts_au AFTER UPDATE ON tweets BEGIN
+            INSERT INTO tweets_fts(tweets_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+            INSERT INTO tweets_fts(rowid, text) VALUES (new.rowid, new.text);
+        END
+    """)
+
+
 def sync_fts(conn):
+    """Full FTS5 rebuild. Use for manual repair; normal inserts are handled by triggers."""
     conn.execute("INSERT INTO tweets_fts(tweets_fts) VALUES('rebuild')")
     conn.commit()
 

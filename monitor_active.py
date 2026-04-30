@@ -41,6 +41,39 @@ try:
 except Exception:
     DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_SERENITY")
 
+_MONTHLY_STAMP = BASE_PATH / ".last_monthly_summary"
+
+
+async def run_monthly_summary_if_due():
+    """Run monthly_summary.py for all accounts on the 1st of each month at 09:00+."""
+    now = datetime.now()
+    if now.day != 1 or now.hour < 9:
+        return
+    month_str = now.strftime("%Y-%m")
+    if _MONTHLY_STAMP.exists() and _MONTHLY_STAMP.read_text().strip() == month_str:
+        return
+    accounts = _load_all_accounts() or ["aleabitoreddit"]
+    logger.info(f"📊 Running monthly summary for {month_str}...")
+    for account in accounts:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(BASE_PATH / "monthly_summary.py"),
+                "--account", account,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+            if proc.returncode != 0:
+                logger.error(f"Monthly summary failed for {account}: {stderr.decode(errors='replace')}")
+            else:
+                logger.info(f"✅ Monthly summary done for {account}")
+        except asyncio.TimeoutError:
+            logger.error(f"Monthly summary timed out for {account}")
+        except Exception as e:
+            logger.error(f"Monthly summary error for {account}: {e}")
+    _MONTHLY_STAMP.write_text(month_str)
+
+
 async def run_scraper(account: str = "aleabitoreddit"):
     """執行 Scraper 並處理結果"""
     start_time = time.time()
@@ -92,6 +125,7 @@ async def main():
         while True:
             run_count += 1
             success = True
+            await run_monthly_summary_if_due()
             accounts = _load_all_accounts() or ["aleabitoreddit"]
             for account in accounts:
                 ok, res = await run_scraper(account)
