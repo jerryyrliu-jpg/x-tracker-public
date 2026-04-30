@@ -125,8 +125,8 @@ def load_since_id(account: str) -> str | None:
     if state_file.exists():
         try:
             return json.loads(state_file.read_text()).get("last_id")
-        except Exception:
-            pass
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"Warning: could not read since_id for {account}: {e}", file=sys.stderr)
     return None
 
 
@@ -204,7 +204,6 @@ async def run(account_cfg: dict, dry_run: bool = False):
             await send_discord(webhook, f"{text}\n{tweet_url}", image_paths)
             await asyncio.sleep(1)
 
-    sync_fts(conn)
     save_since_id(account, new_tweets[0].id)
     print(f"[{account}] Done. since_id={new_tweets[0].id}")
 

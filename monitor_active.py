@@ -2,8 +2,6 @@ import asyncio
 import json
 import os
 import random
-import signal
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -44,16 +42,28 @@ except Exception:
 _MONTHLY_STAMP = BASE_PATH / ".last_monthly_summary"
 
 
+_MONTHLY_TIMEOUT = int(os.environ.get("MONTHLY_SUMMARY_TIMEOUT", "600"))
+
+
 async def run_monthly_summary_if_due():
-    """Run monthly_summary.py for all accounts on the 1st of each month at 09:00+."""
+    """Run monthly_summary.py for all accounts once per month at 09:00+.
+
+    Catches up if the monitor was offline on the 1st — runs any time this
+    month if the stamp is missing or stale.
+    """
     now = datetime.now()
-    if now.day != 1 or now.hour < 9:
+    if now.hour < 9:
         return
     month_str = now.strftime("%Y-%m")
-    if _MONTHLY_STAMP.exists() and _MONTHLY_STAMP.read_text().strip() == month_str:
+    try:
+        stamped = _MONTHLY_STAMP.read_text().strip() if _MONTHLY_STAMP.exists() else ""
+    except OSError:
+        stamped = ""
+    if stamped == month_str:
         return
     accounts = _load_all_accounts() or ["aleabitoreddit"]
     logger.info(f"📊 Running monthly summary for {month_str}...")
+    any_success = False
     for account in accounts:
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -62,16 +72,18 @@ async def run_monthly_summary_if_due():
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=_MONTHLY_TIMEOUT)
             if proc.returncode != 0:
                 logger.error(f"Monthly summary failed for {account}: {stderr.decode(errors='replace')}")
             else:
                 logger.info(f"✅ Monthly summary done for {account}")
+                any_success = True
         except asyncio.TimeoutError:
             logger.error(f"Monthly summary timed out for {account}")
         except Exception as e:
             logger.error(f"Monthly summary error for {account}: {e}")
-    _MONTHLY_STAMP.write_text(month_str)
+    if any_success:
+        _MONTHLY_STAMP.write_text(month_str)
 
 
 async def run_scraper(account: str = "aleabitoreddit"):
@@ -89,18 +101,18 @@ async def run_scraper(account: str = "aleabitoreddit"):
         runtime = time.time() - start_time
         if proc.returncode == 0:
             try:
-                res = json.loads(stdout.decode(errors="replace").strip())
+                res = json.loads(stdout.decode(errors='replace').strip())
                 metrics.report(True, runtime)
                 logger.info(f"✅ Success: New {res['new_count']} tweets ({runtime:.1f}s)")
                 return True, res
             except Exception:
-                logger.error(f"❌ JSON Parse Error: {stdout.decode(errors="replace")}")
+                logger.error(f"❌ JSON Parse Error: {stdout.decode(errors='replace')}")
                 metrics.report(False, runtime)
         elif proc.returncode == 2:
             logger.warning(f"⚠️ Potential structure change detected!")
             await send_discord(DISCORD_WEBHOOK, "🚨 **X-Tracker Alert**: Twitter structure change detected!")
         else:
-            logger.error(f"❌ Scraper failed (Code {proc.returncode}): {stderr.decode(errors="replace")}")
+            logger.error(f"❌ Scraper failed (Code {proc.returncode}): {stderr.decode(errors='replace')}")
             metrics.report(False, runtime)
             
     except asyncio.TimeoutError:
@@ -150,7 +162,7 @@ async def main():
                                 await send_discord(DISCORD_WEBHOOK, "♻️ **Self-Healing**: Chrome restarted successfully.")
                                 fail_count = 0
                             else:
-                                logger.error(f"❌ Restart script failed: {stderr.decode(errors="replace")}")
+                                logger.error(f"❌ Restart script failed: {stderr.decode(errors='replace')}")
                         except asyncio.TimeoutError:
                             logger.error("❌ Restart script timed out (>60s).")
                         except Exception as e:

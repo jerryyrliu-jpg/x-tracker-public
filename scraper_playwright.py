@@ -1,16 +1,15 @@
 import asyncio
 import json
-import os
 import re
 import httpx
 import sys
 import random
-import signal
 from pathlib import Path
 from datetime import datetime
 from playwright.async_api import async_playwright
 from dotenv import load_dotenv
 from utils import get_db_conn
+from scraper import _ensure_fts_triggers
 
 SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
@@ -99,6 +98,7 @@ async def scrape():
             articles = await page.query_selector_all("article[data-testid='tweet']")
 
             conn = get_db_conn(DB_PATH)
+            _ensure_fts_triggers(conn)
             new_count = 0
             try:
                 for t in articles[:10]:

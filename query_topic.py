@@ -125,7 +125,7 @@ def search_all_accounts_fts(conn, topic: str, days: int) -> dict:
         with open(SCRAPER_BASE / "accounts.yaml") as f:
             cfg = yaml.safe_load(f) or {}
         accounts = [k for k, v in cfg.get("accounts", {}).items() if v.get("enabled", True)]
-    except Exception as e:
+    except (OSError, yaml.YAMLError) as e:
         logger.warning("Failed to load accounts.yaml, falling back to default: %s", e)
         accounts = ["aleabitoreddit"]
     return {
@@ -170,9 +170,12 @@ def _run_gemini_sdk(prompt: str, timeout: int = 300) -> str:
             prompt,
             request_options={"timeout": timeout},
         )
+        if not response.candidates:
+            print("Gemini SDK: no candidates (safety block?); falling back to CLI.", file=sys.stderr)
+            return _run_gemini_cli(prompt, timeout)
         return response.text or ""
     except Exception as e:
-        print(f"Gemini SDK call failed: {e}; falling back to CLI.", file=sys.stderr)
+        logger.exception("Gemini SDK call failed; falling back to CLI.")
         return _run_gemini_cli(prompt, timeout)
 
 
