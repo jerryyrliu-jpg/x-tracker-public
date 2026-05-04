@@ -39,7 +39,7 @@ class NewsExtractor:
     def extract_from_article(self, article: dict) -> list[dict]:
         """Call gemini CLI to extract relations. Raises on error."""
         text = f"{article['title'][:300]}. {article.get('summary', '')[:280]}"
-        prompt = EXTRACTION_PROMPT.format(text=text)
+        prompt = EXTRACTION_PROMPT.format(text=text.replace("{", "{{").replace("}", "}}"))
         result = subprocess.run(
             ["gemini", "-p", prompt],
             capture_output=True, text=True, encoding="utf-8"

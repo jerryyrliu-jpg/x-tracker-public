@@ -16,6 +16,22 @@ _accounts_yaml_lock = asyncio.Lock()
 TICKER_RE = re.compile(r'^[A-Z0-9.\-]{1,10}$')
 DAYS_RE = re.compile(r'\bdays?:(\S+)\b', re.IGNORECASE)
 
+_COOLDOWN_SECS = 60
+_user_cooldowns: dict[int, float] = {}  # user_id → last_call_timestamp
+
+
+def _check_cooldown(user_id: int) -> float:
+    """Return remaining cooldown seconds, or 0.0 if ready."""
+    import time
+    last = _user_cooldowns.get(user_id, 0.0)
+    remaining = _COOLDOWN_SECS - (time.time() - last)
+    return max(0.0, remaining)
+
+
+def _mark_cooldown(user_id: int) -> None:
+    import time
+    _user_cooldowns[user_id] = time.time()
+
 SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
@@ -31,6 +47,7 @@ NEWS_EXTRACT_TIME_UTC = time(8, 30, tzinfo=timezone.utc)  # 16:30 Taipei
 intents = discord.Intents.default()
 intents.message_content = True
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)  # prevent webhook URL leaking into logs
 bot = commands.Bot(command_prefix="$", intents=intents, allowed_mentions=discord.AllowedMentions.none())
 tree = bot.tree
 
@@ -705,6 +722,11 @@ async def stats(interaction: discord.Interaction):
 @app_commands.describe(days="要追蹤的天數 (預設 7, 上限 90)")
 async def summary(interaction: discord.Interaction, days: int = 7):
     print(f"[bot] /summary called with days={days}")
+    remaining = _check_cooldown(interaction.user.id)
+    if remaining > 0:
+        await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
+        return
+    _mark_cooldown(interaction.user.id)
     days = max(1, min(days, 90))
     await interaction.response.defer(thinking=True)
     out_file = f"/tmp/bot_summary_{days}_{interaction.id}.json"
@@ -756,6 +778,11 @@ async def on_message(message):
         raw = message.content[1:].strip()
         ticker, days = parse_ticker_message(raw)
         if TICKER_RE.match(ticker):
+            remaining = _check_cooldown(message.author.id)
+            if remaining > 0:
+                await message.channel.send(f"⏳ 請等 {remaining:.0f} 秒後再試。")
+                return
+            _mark_cooldown(message.author.id)
             safe_ticker = re.sub(r'[^A-Z0-9]', '_', ticker)
             out_file = f"/tmp/bot_{safe_ticker}_{message.id}.json"
             cmd = [
@@ -802,6 +829,11 @@ async def on_message(message):
 @tree.command(name="analyze", description="分析特定標的的觀點趨勢")
 @app_commands.describe(symbol="標的名稱 (如 TSLA, BTC)", days="追蹤天數 (預設 30, 上限 90)")
 async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30):
+    remaining = _check_cooldown(interaction.user.id)
+    if remaining > 0:
+        await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
+        return
+    _mark_cooldown(interaction.user.id)
     days = max(1, min(days, 90))
     await interaction.response.defer(thinking=True)
     ticker = symbol.strip().upper()
@@ -854,6 +886,9 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
 
 @tree.command(name="pausex", description="暫停 X-Tracker 輪詢並釋放 Chrome 資源")
 async def pausex(interaction: discord.Interaction):
+    if not await bot.is_owner(interaction.user):
+        await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
+        return
     await interaction.response.defer(thinking=True)
     # 1. 停止所有監控進程
     p1 = await asyncio.create_subprocess_shell("pkill -f monitor_active.py")
@@ -869,6 +904,9 @@ async def pausex(interaction: discord.Interaction):
 
 @tree.command(name="resumex", description="恢復 X-Tracker 輪詢並重啟 Chrome")
 async def resumex(interaction: discord.Interaction):
+    if not await bot.is_owner(interaction.user):
+        await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
+        return
     await interaction.response.defer(thinking=True)
     # 0. 先清理舊的監控進程，確保冪等性
     p0a = await asyncio.create_subprocess_shell("pkill -f monitor_active.py")

@@ -10,15 +10,15 @@ KEYWORDS = BASE / "cpo_chain" / "keywords.yaml"
 with open(KEYWORDS, encoding="utf-8") as f:
     config = yaml.safe_load(f)
 root_tickers = config.get("root_tickers", ["NVDA"])
-tickers_str = ",".join(f"'{t}'" for t in root_tickers)
 
 conn = sqlite3.connect(DB)
 conn.row_factory = sqlite3.Row
 
+ticker_placeholders = ",".join("?" * len(root_tickers))
 tiers_data = conn.execute(f"""
 WITH RECURSIVE hierarchy(id, name, ticker, country, level, path) AS (
   SELECT c.id, c.name, c.ticker, c.country, 0, CAST(c.id AS TEXT)
-  FROM industry_entities c WHERE c.ticker IN ({tickers_str})
+  FROM industry_entities c WHERE c.ticker IN ({ticker_placeholders})
   UNION ALL
   SELECT c.id, c.name, c.ticker, c.country, h.level+1, h.path||','||c.id
   FROM industry_entities c
@@ -29,7 +29,7 @@ WITH RECURSIVE hierarchy(id, name, ticker, country, level, path) AS (
 )
 SELECT id, name, ticker, country, MIN(level) as tier
 FROM hierarchy GROUP BY id,name,ticker ORDER BY tier,name
-""").fetchall()
+""", root_tickers).fetchall()
 
 # Fetch industry_tags for each entity
 tags_map = {r[0]: (r[1] or "") for r in conn.execute("SELECT id, industry_tags FROM industry_entities").fetchall()}
@@ -38,12 +38,12 @@ tiers_list = [dict(r) | {"tags": tags_map.get(dict(r)["id"], "")} for r in tiers
 node_ids = [r["id"] for r in tiers_list]
 links = []
 if node_ids:
-    ids_str = ",".join(str(i) for i in node_ids)
+    id_placeholders = ",".join("?" * len(node_ids))
     links = [dict(r) for r in conn.execute(f"""
         SELECT from_company_id as source, to_company_id as target, role, confidence
         FROM industry_relations WHERE status='active' AND industry_context='CPO'
-        AND from_company_id IN ({ids_str}) AND to_company_id IN ({ids_str})
-    """).fetchall()]
+        AND from_company_id IN ({id_placeholders}) AND to_company_id IN ({id_placeholders})
+    """, node_ids + node_ids).fetchall()]
 conn.close()
 
 data = {
@@ -57,7 +57,7 @@ data = {
     "links": links,
 }
 
-data_json = json.dumps(data, ensure_ascii=False)
+data_json = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
 gen_time = datetime.now().strftime("%Y-%m-%d %H:%M")
 
 HTML.write_text(f"""<!DOCTYPE html>
