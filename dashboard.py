@@ -129,11 +129,13 @@ with tab2:
                 try:
                     r1 = subprocess.run(
                         [sys.executable, "-m", "cpo_chain.export_universal"],
-                        cwd=str(SCRAPER_BASE), capture_output=True, timeout=60
+                        cwd=str(SCRAPER_BASE), capture_output=True, timeout=60,
+                        text=True, encoding="utf-8",
                     )
                     r2 = subprocess.run(
                         [sys.executable, str(SCRAPER_BASE / "scripts" / "update_network_html.py")],
-                        cwd=str(SCRAPER_BASE), capture_output=True, timeout=60
+                        cwd=str(SCRAPER_BASE), capture_output=True, timeout=60,
+                        text=True, encoding="utf-8",
                     )
                     if r1.returncode != 0 or r2.returncode != 0:
                         st.error("圖譜生成失敗，請查看 logs/monitor_active.err。")

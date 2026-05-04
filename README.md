@@ -66,6 +66,7 @@ GEMINI_API_KEY=...          # Gemini SDK 模式（設定後自動啟用）
 GEMINI_BACKEND=auto         # sdk | cli | auto（預設 auto）
 GEMINI_MODEL=gemini-2.5-flash-lite
 MONTHLY_SUMMARY_TIMEOUT=600 # 月報逾時秒數（預設 600）
+EDGAR_USER_AGENT=x-tracker your@email.com  # SEC EDGAR 必填 User-Agent
 ```
 
 ### `accounts.yaml`

@@ -32,14 +32,14 @@ def get_chain_data(conn: sqlite3.Connection, root_tickers: list[str], industry_c
     Calculate Tiers starting from root_tickers for a specific industry context.
     """
     if not root_tickers: return []
-    tickers_str = ", ".join([f"'{t}'" for t in root_tickers])
-    
+    ticker_placeholders = ", ".join("?" * len(root_tickers))
+
     sql = f"""
-    WITH RECURSIVE 
+    WITH RECURSIVE
       hierarchy(id, name, ticker, level, path) AS (
         SELECT c.id, c.name, c.ticker, 0, CAST(c.id AS TEXT)
         FROM industry_entities c
-        WHERE c.ticker IN ({tickers_str})
+        WHERE c.ticker IN ({ticker_placeholders})
         
         UNION ALL
         
@@ -61,25 +61,25 @@ def get_chain_data(conn: sqlite3.Connection, root_tickers: list[str], industry_c
     """
     try:
         conn.row_factory = sqlite3.Row
-        return [dict(r) for r in conn.execute(sql, (industry_context,)).fetchall()]
+        return [dict(r) for r in conn.execute(sql, root_tickers + [industry_context]).fetchall()]
     except Exception as e:
         print(f"CTE Error [{industry_context}]: {e}")
         return []
 
 def get_all_links(conn: sqlite3.Connection, node_ids: list[int], industry_context: str = "CPO"):
     if not node_ids: return []
-    ids_str = ", ".join([str(i) for i in node_ids])
+    id_placeholders = ", ".join("?" * len(node_ids))
     sql = f"""
     SELECT from_company_id as source, to_company_id as target, role, industry_context,
            confidence, edgar_score, news_score
     FROM industry_relations
     WHERE status = 'active' AND industry_context = ?
-    AND from_company_id IN ({ids_str})
-    AND to_company_id IN ({ids_str});
+    AND from_company_id IN ({id_placeholders})
+    AND to_company_id IN ({id_placeholders});
     """
     try:
         conn.row_factory = sqlite3.Row
-        return [dict(r) for r in conn.execute(sql, (industry_context,)).fetchall()]
+        return [dict(r) for r in conn.execute(sql, [industry_context] + node_ids + node_ids).fetchall()]
     except Exception as e:
         print(f"Links Error: {e}")
         return []

@@ -1,4 +1,5 @@
 
+import os
 import requests
 import time
 import threading
@@ -32,7 +33,7 @@ _edgar_bucket = _TokenBucket(rate=8)
 
 class EdgarFetcher:
     FULLTEXT_URL = "https://efts.sec.gov/LATEST/search-index"
-    HEADERS = {"User-Agent": "x-tracker ppisliu@gmail.com"}
+    HEADERS = {"User-Agent": os.getenv("EDGAR_USER_AGENT", "x-tracker contact@example.com")}
     MAX_RETRIES = 3
 
     def search_relation(self, supplier: str, customer: str) -> list[dict]:

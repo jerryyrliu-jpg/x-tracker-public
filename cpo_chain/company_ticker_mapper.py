@@ -1,4 +1,5 @@
 
+import os
 import requests
 import sqlite3
 import time
@@ -7,7 +8,7 @@ from pathlib import Path
 
 class CompanyTickerMapper:
     SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
-    HEADERS = {"User-Agent": "x-tracker ppisliu@gmail.com"}
+    HEADERS = {"User-Agent": os.getenv("EDGAR_USER_AGENT", "x-tracker contact@example.com")}
 
     def load_or_refresh(self, conn: sqlite3.Connection, max_age_hours=24) -> None:
         """若快取 > 24h 則重新從 SEC 下載並更新 company_ticker_map"""

@@ -68,7 +68,8 @@ async def call_gemini(tweets_batch: list[dict]) -> list[dict]:
             ['gemini', '-p', prompt],
             capture_output=True,
             text=True,
-            encoding='utf-8'
+            encoding='utf-8',
+            timeout=120,
         )
 
         if result.returncode != 0:

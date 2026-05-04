@@ -1,4 +1,4 @@
-import json, re, sqlite3, yaml
+import json, os, re, sqlite3, yaml
 from pathlib import Path
 from datetime import datetime
 
@@ -60,7 +60,7 @@ data = {
 data_json = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
 gen_time = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-HTML.write_text(f"""<!DOCTYPE html>
+html_content = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -376,5 +376,9 @@ HTML.write_text(f"""<!DOCTYPE html>
         }});
     </script>
 </body>
-</html>""", encoding="utf-8")
+</html>"""
+
+tmp_path = str(HTML) + ".tmp"
+Path(tmp_path).write_text(html_content, encoding="utf-8")
+os.replace(tmp_path, HTML)
 print(f"index.html updated: {len(tiers_list)} companies, {len(links)} links")

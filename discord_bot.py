@@ -224,7 +224,7 @@ async def _run_confidence_boost() -> None:
     news = CompositeNewsFetcher(mapper=mapper)
     updater = ConfidenceUpdater(db_path, edgar, news, mapper)
     
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         # Run 100 relations per day
         result = await loop.run_in_executor(None, updater.run, 100)
@@ -631,10 +631,10 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
             parts = []
             for c in companies[:12]:
                 ticker = c["ticker"]
-                name = c["name"]
+                name = discord.utils.escape_markdown(c["name"])
                 conf = c["max_conf"]
                 badge = "✅" if conf >= 0.8 else ("📄" if conf >= 0.6 else "⚠️")
-                tag = f"`${ticker}`" if ticker else f"_{name}_"
+                tag = f"`${ticker}`" if ticker and TICKER_RE.match(ticker) else f"_{name}_"
                 parts.append(f"{badge} {tag}")
             overflow = len(companies) - 12
             line = f"**{label}**\n" + "  ".join(parts)
@@ -644,7 +644,7 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
 
         # Add hyperscalers
         if root_rows:
-            h_parts = [f"`${r['ticker']}`" if r["ticker"] else f"_{r['name']}_" for r in root_rows[:8]]
+            h_parts = [f"`${r['ticker']}`" if r["ticker"] and TICKER_RE.match(r["ticker"]) else f"_{discord.utils.escape_markdown(r['name'])}_" for r in root_rows[:8]]
             lines.append(f"**🏢 終端客戶 (Hyperscaler)**\n" + "  ".join(h_parts))
 
         lines.append(f"\n_資料來源: USCI DB · 使用 `/supply company:NVDA` 查詢詳細供應關係_")
@@ -731,7 +731,7 @@ async def account_toggle(interaction: discord.Interaction, action: str, name: st
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        await interaction.followup.send(f"❌ 操作失敗：{e}", ephemeral=True)
+        await interaction.followup.send("❌ 操作失敗，請查看伺服器日誌。", ephemeral=True)
 
 
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")

@@ -1,4 +1,5 @@
 import feedparser
+import os
 import requests
 import sqlite3
 import time
@@ -45,7 +46,7 @@ class NewsArticleFetcher:
         try:
             resp = requests.get(
                 url,
-                headers={"User-Agent": "x-tracker ppisliu@gmail.com"},
+                headers={"User-Agent": os.getenv("EDGAR_USER_AGENT", "x-tracker contact@example.com")},
                 timeout=10,
             )
             resp.raise_for_status()

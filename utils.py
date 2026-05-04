@@ -49,7 +49,7 @@ class PIDLock:
                 else:
                     return False
             except (ProcessLookupError, ValueError):
-                self.lock_path.unlink()
+                self.lock_path.unlink(missing_ok=True)
             except Exception as e:
                 print(f"❌ Lock Error: {e}")
                 return False

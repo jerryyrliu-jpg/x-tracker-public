@@ -10,8 +10,7 @@ logger = logging.getLogger("news_extractor")
 
 INDUSTRY_CONTEXTS = ["CPO", "HBM", "AI_Server", "Liquid_Cooling", "Advanced_Packaging", "Other"]
 
-EXTRACTION_PROMPT = """
-你是供應鏈分析師。從以下新聞標題與摘要中，識別明確的供應鏈關係。
+_EXTRACTION_PROMPT_PREFIX = """你是供應鏈分析師。從以下新聞標題與摘要中，識別明確的供應鏈關係。
 
 規則：
 - 只萃取有明確 supplier/customer/manufacturer/partner 關係的內容
@@ -19,11 +18,10 @@ EXTRACTION_PROMPT = """
 - industry_context 必須從以下選擇：CPO, HBM, AI_Server, Liquid_Cooling, Advanced_Packaging, Other
 
 輸出嚴格 JSON（無其他文字）：
-{{"relations": [{{"supplier": "公司A", "customer": "公司B", "role": "角色描述", "industry_context": "CPO"}}]}}
-若無明確關係：{{"relations": []}}
+{"relations": [{"supplier": "公司A", "customer": "公司B", "role": "角色描述", "industry_context": "CPO"}]}
+若無明確關係：{"relations": []}
 
-新聞：{text}
-"""
+新聞："""
 
 SOURCE_BASE_SCORE = {
     "google_news": 0.55,
@@ -39,7 +37,7 @@ class NewsExtractor:
     def extract_from_article(self, article: dict) -> list[dict]:
         """Call gemini CLI to extract relations. Raises on error."""
         text = f"{article['title'][:300]}. {article.get('summary', '')[:280]}"
-        prompt = EXTRACTION_PROMPT.format(text=text.replace("{", "{{").replace("}", "}}"))
+        prompt = _EXTRACTION_PROMPT_PREFIX + text
         result = subprocess.run(
             ["gemini", "-p", prompt],
             capture_output=True, text=True, encoding="utf-8",
