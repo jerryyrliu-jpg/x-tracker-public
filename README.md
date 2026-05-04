@@ -116,6 +116,7 @@ streamlit run dashboard.py
 
 | 版本 | 日期 | 主要變更 |
 |------|------|---------|
+| v4.6.4 | 2026-05-04 | Security R3：extract_universal timeout、monthly_summary TWEET_DATA 隔離+timeout+GEMINI_MODEL、export_universal SQL parameterized、/chain escape_markdown、/account error redact、dashboard subprocess text=True、get_running_loop、HTML 原子寫入、EDGAR_USER_AGENT env var |
 | v4.6.3 | 2026-05-04 | Security R2：$summary_test owner-only+cooldown+timeout、9 處 proc.communicate 加 wait_for、atomic _try_cooldown、EntityResolver commit、INSERT OR IGNORE、cache TTL 解耦、argparse 移入函式、bare except 修正 |
 | v4.6.2 | 2026-05-04 | Security R1：httpx log 過濾、/pausex /resumex owner guard、Gemini prompt TWEET_DATA 隔離、EXTRACTION_PROMPT brace escape、60s rate limiting、SQL parameterized、</script> XSS 修正 |
 | v4.6.1 | 2026-04-30 | Code review fixes：import os、monthly stamp 成功才寫、SDK candidates check、logger 統一、_DEFAULT_ACCOUNT 常數、encoding='utf-8'、FTS5 OperationalError log |
