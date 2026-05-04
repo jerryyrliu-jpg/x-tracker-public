@@ -20,17 +20,19 @@ _COOLDOWN_SECS = 60
 _user_cooldowns: dict[int, float] = {}  # user_id → last_call_timestamp
 
 
-def _check_cooldown(user_id: int) -> float:
-    """Return remaining cooldown seconds, or 0.0 if ready."""
+def _try_cooldown(user_id: int) -> float:
+    """Atomically check and mark cooldown. Returns 0.0 if allowed (and records), else remaining seconds.
+    Also prunes entries older than 10× the cooldown window."""
     import time
-    last = _user_cooldowns.get(user_id, 0.0)
-    remaining = _COOLDOWN_SECS - (time.time() - last)
-    return max(0.0, remaining)
-
-
-def _mark_cooldown(user_id: int) -> None:
-    import time
-    _user_cooldowns[user_id] = time.time()
+    now = time.time()
+    stale = [uid for uid, ts in _user_cooldowns.items() if now - ts > _COOLDOWN_SECS * 10]
+    for uid in stale:
+        del _user_cooldowns[uid]
+    remaining = _COOLDOWN_SECS - (now - _user_cooldowns.get(user_id, 0.0))
+    if remaining > 0:
+        return remaining
+    _user_cooldowns[user_id] = now
+    return 0.0
 
 SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
@@ -63,7 +65,7 @@ def parse_ticker_message(raw: str) -> tuple[str, int]:
     if m:
         val = m.group(1)
         if val.isdigit():
-            days = min(int(val), 90)
+            days = max(1, min(int(val), 90))
         raw = DAYS_RE.sub("", raw)
     return raw.strip().upper(), days
 
@@ -138,17 +140,27 @@ async def _run_cpo_update() -> None:
         sys.executable, extract_script, "--limit", "200", "--vector",
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=str(SCRAPER_BASE)
     )
-    st1, er1 = await proc1.communicate()
+    try:
+        st1, er1 = await asyncio.wait_for(proc1.communicate(), timeout=600)
+    except asyncio.TimeoutError:
+        proc1.kill(); await proc1.wait()
+        print("[usci-update] extract timed out (>600s)")
+        return
     if proc1.returncode != 0:
-        print(f"[usci-update] {extract_script} failed: {er1.decode(errors="replace")}")
+        print(f"[usci-update] {extract_script} failed: {er1.decode(errors='replace')}")
         # Fallback to keyword search if vector fails — must await to avoid race with export
         fallback = await asyncio.create_subprocess_exec(
             sys.executable, extract_script, "--limit", "100",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=str(SCRAPER_BASE)
         )
-        _, fb_er = await fallback.communicate()
+        try:
+            _, fb_er = await asyncio.wait_for(fallback.communicate(), timeout=600)
+        except asyncio.TimeoutError:
+            fallback.kill(); await fallback.wait()
+            print("[usci-update] fallback extract timed out (>600s)")
+            return
         if fallback.returncode != 0:
-            print(f"[usci-update] Fallback extract failed: {fb_er.decode(errors="replace")}")
+            print(f"[usci-update] Fallback extract failed: {fb_er.decode(errors='replace')}")
             return
 
     # 2. Export
@@ -156,9 +168,14 @@ async def _run_cpo_update() -> None:
         sys.executable, export_script,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=str(SCRAPER_BASE)
     )
-    st2, er2 = await proc2.communicate()
+    try:
+        st2, er2 = await asyncio.wait_for(proc2.communicate(), timeout=120)
+    except asyncio.TimeoutError:
+        proc2.kill(); await proc2.wait()
+        print("[usci-update] export timed out (>120s)")
+        return
     if proc2.returncode != 0:
-        print(f"[usci-update] {export_script} failed: {er2.decode(errors="replace")}")
+        print(f"[usci-update] {export_script} failed: {er2.decode(errors='replace')}")
         return
         
     print("[usci-update] Universal supply chain update successful.")
@@ -185,9 +202,15 @@ async def _run_monthly_summary(webhook_url: str) -> None:
             stderr=asyncio.subprocess.PIPE,
             cwd=str(SCRAPER_BASE),
         )
-        _, stderr = await proc.communicate()
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+        except asyncio.TimeoutError:
+            proc.kill(); await proc.wait()
+            print(f"[auto-monthly] {account} timed out (>600s)")
+            await send_discord(webhook_url, f"⚠️ 月度摘要逾時 (@{account})，已跳過。")
+            continue
         if proc.returncode != 0:
-            err = stderr.decode(errors="replace")[:300]
+            err = stderr.decode(errors='replace')[:300]
             print(f"[auto-monthly] {account} failed: {err}")
             await send_discord(webhook_url, f"⚠️ 月度摘要失敗 (@{account})，請查看伺服器日誌。\n`{err}`")
         else:
@@ -348,10 +371,16 @@ async def on_ready():
 
 
 @bot.command(name="summary_test")
+@commands.is_owner()
 async def summary_prefix(ctx, days: int = 1):
-    print(f"[bot]  called with days={days}")
+    days = max(1, min(days, 90))
+    remaining = _try_cooldown(ctx.author.id)
+    if remaining > 0:
+        await ctx.send(f"⏳ 請等 {remaining:.0f} 秒後再試。")
+        return
+    print(f"[bot] $summary_test called with days={days}")
     await ctx.send(f"正在為您準備最近 {days} 天的摘要分析... (這可能需要一點時間)")
-    
+
     out_file = f"/tmp/prefix_summary_{days}_{ctx.message.id}.json"
     cmd = [
         sys.executable,
@@ -360,15 +389,20 @@ async def summary_prefix(ctx, days: int = 1):
         "--days", str(days),
         "--output", out_file,
     ]
-    
+
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(SCRAPER_BASE),
     )
-    _, stderr = await proc.communicate()
-    
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+    except asyncio.TimeoutError:
+        proc.kill(); await proc.wait()
+        await ctx.send("⚠️ 分析逾時 (>7m)，已中止。")
+        return
+
     if proc.returncode == 0 and os.path.exists(out_file):
         try:
             with open(out_file, encoding="utf-8") as f:
@@ -379,10 +413,14 @@ async def summary_prefix(ctx, days: int = 1):
                     await ctx.send(text[i : i + 1900])
             else:
                 await ctx.send("分析失敗，今日無資料。")
-        except:
+        except Exception as e:
+            print(f"Error reading summary_test output: {e}")
             await ctx.send("讀取分析結果失敗。")
+        finally:
+            if os.path.exists(out_file):
+                os.unlink(out_file)
     else:
-        await ctx.send(f"分析執行失敗: {stderr.decode(errors="replace")[:200]}")
+        await ctx.send(f"分析執行失敗: {stderr.decode(errors='replace')[:200]}")
 
 @bot.command(name="sync")
 @commands.is_owner()
@@ -722,11 +760,10 @@ async def stats(interaction: discord.Interaction):
 @app_commands.describe(days="要追蹤的天數 (預設 7, 上限 90)")
 async def summary(interaction: discord.Interaction, days: int = 7):
     print(f"[bot] /summary called with days={days}")
-    remaining = _check_cooldown(interaction.user.id)
+    remaining = _try_cooldown(interaction.user.id)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
-    _mark_cooldown(interaction.user.id)
     days = max(1, min(days, 90))
     await interaction.response.defer(thinking=True)
     out_file = f"/tmp/bot_summary_{days}_{interaction.id}.json"
@@ -744,7 +781,12 @@ async def summary(interaction: discord.Interaction, days: int = 7):
         stderr=asyncio.subprocess.PIPE,
         cwd=str(SCRAPER_BASE),
     )
-    _, stderr = await proc.communicate()
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+    except asyncio.TimeoutError:
+        proc.kill(); await proc.wait()
+        await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
+        return
 
     if proc.returncode == 0 and os.path.exists(out_file):
         try:
@@ -764,7 +806,7 @@ async def summary(interaction: discord.Interaction, days: int = 7):
                 os.unlink(out_file)
     else:
         if stderr:
-            print(f"Error in /summary: {stderr.decode(errors="replace")}")
+            print(f"Error in /summary: {stderr.decode(errors='replace')}")
         await interaction.followup.send(f"最近 {days} 天無推文資料。")
 
 
@@ -778,11 +820,10 @@ async def on_message(message):
         raw = message.content[1:].strip()
         ticker, days = parse_ticker_message(raw)
         if TICKER_RE.match(ticker):
-            remaining = _check_cooldown(message.author.id)
+            remaining = _try_cooldown(message.author.id)
             if remaining > 0:
                 await message.channel.send(f"⏳ 請等 {remaining:.0f} 秒後再試。")
                 return
-            _mark_cooldown(message.author.id)
             safe_ticker = re.sub(r'[^A-Z0-9]', '_', ticker)
             out_file = f"/tmp/bot_{safe_ticker}_{message.id}.json"
             cmd = [
@@ -801,7 +842,12 @@ async def on_message(message):
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(SCRAPER_BASE),
                 )
-                stdout, stderr = await proc.communicate()
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+                except asyncio.TimeoutError:
+                    proc.kill(); await proc.wait()
+                    await message.channel.send(f"⚠️ {ticker} 分析逾時 (>7m)，已中止。")
+                    return
 
                 if proc.returncode == 0 and os.path.exists(out_file):
                     try:
@@ -821,7 +867,7 @@ async def on_message(message):
                             os.unlink(out_file)
                 else:
                     if stderr:
-                        print(f"Error analyzing {ticker}: {stderr.decode(errors="replace")}")
+                        print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')}")
                     await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 
@@ -829,11 +875,10 @@ async def on_message(message):
 @tree.command(name="analyze", description="分析特定標的的觀點趨勢")
 @app_commands.describe(symbol="標的名稱 (如 TSLA, BTC)", days="追蹤天數 (預設 30, 上限 90)")
 async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30):
-    remaining = _check_cooldown(interaction.user.id)
+    remaining = _try_cooldown(interaction.user.id)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
-    _mark_cooldown(interaction.user.id)
     days = max(1, min(days, 90))
     await interaction.response.defer(thinking=True)
     ticker = symbol.strip().upper()
@@ -858,7 +903,12 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         stderr=asyncio.subprocess.PIPE,
         cwd=str(SCRAPER_BASE),
     )
-    _, stderr = await proc.communicate()
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+    except asyncio.TimeoutError:
+        proc.kill(); await proc.wait()
+        await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
+        return
 
     if proc.returncode == 0 and os.path.exists(out_file):
         try:
@@ -878,7 +928,7 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
                 os.unlink(out_file)
     else:
         if stderr:
-            print(f"Error analyzing {ticker}: {stderr.decode(errors="replace")}")
+            print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')}")
         await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 
@@ -891,14 +941,19 @@ async def pausex(interaction: discord.Interaction):
         return
     await interaction.response.defer(thinking=True)
     # 1. 停止所有監控進程
-    p1 = await asyncio.create_subprocess_shell("pkill -f monitor_active.py")
-    await p1.wait()
-    p2 = await asyncio.create_subprocess_shell("pkill -f monitor_rss.py")
-    await p2.wait()
+    for script in ("monitor_active.py", "monitor_rss.py"):
+        p = await asyncio.create_subprocess_exec("pkill", "-f", script)
+        try:
+            await asyncio.wait_for(p.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            pass
     # 2. 強制關閉 Chrome (帶有特定 profile)
-    p3 = await asyncio.create_subprocess_shell("pkill -f \"Google Chrome.*x_scraper\"")
-    await p3.wait()
-    
+    p3 = await asyncio.create_subprocess_exec("pkill", "-f", "Google Chrome.*x_scraper")
+    try:
+        await asyncio.wait_for(p3.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        pass
+
     await interaction.followup.send("🛑 **X-Tracker 已暫停**。Chrome 資源已釋放，您可以手動使用 Chrome。")
 
 
@@ -909,28 +964,35 @@ async def resumex(interaction: discord.Interaction):
         return
     await interaction.response.defer(thinking=True)
     # 0. 先清理舊的監控進程，確保冪等性
-    p0a = await asyncio.create_subprocess_shell("pkill -f monitor_active.py")
-    await p0a.wait()
-    p0b = await asyncio.create_subprocess_shell("pkill -f monitor_rss.py")
-    await p0b.wait()
+    for script in ("monitor_active.py", "monitor_rss.py"):
+        p = await asyncio.create_subprocess_exec("pkill", "-f", script)
+        try:
+            await asyncio.wait_for(p.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            pass
 
     # 1. 重啟 Chrome (透過腳本)
     restart_script = SCRAPER_BASE / "scripts" / "restart_chrome.sh"
     if restart_script.exists():
         p_restart = await asyncio.create_subprocess_exec("bash", str(restart_script))
-        await p_restart.wait()
-    
-    # 2. 啟動監控進程 (使用 venv python)
+        try:
+            await asyncio.wait_for(p_restart.wait(), timeout=60)
+        except asyncio.TimeoutError:
+            p_restart.kill()
+
+    # 2. 啟動監控進程 (使用 venv python)，以 start_new_session 脫離當前進程組
     venv_python = SCRAPER_BASE / "venv" / "bin" / "python"
     active_script = SCRAPER_BASE / "monitor_active.py"
     rss_script = SCRAPER_BASE / "monitor_rss.py"
-    
-    cmd_active = f"nohup \"{venv_python}\" \"{active_script}\" > \"{SCRAPER_BASE}/monitor_active.log\" 2>&1 &"
-    cmd_rss = f"nohup \"{venv_python}\" \"{rss_script}\" > \"{SCRAPER_BASE}/monitor_rss.log\" 2>&1 &"
-    
-    await asyncio.create_subprocess_shell(cmd_active)
-    await asyncio.create_subprocess_shell(cmd_rss)
-    
+
+    for script in (active_script, rss_script):
+        await asyncio.create_subprocess_exec(
+            str(venv_python), str(script),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
     await interaction.followup.send("🚀 **X-Tracker 已恢復**。Chrome 已重啟並恢復監控輪詢。")
 
 

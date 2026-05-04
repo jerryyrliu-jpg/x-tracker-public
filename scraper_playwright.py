@@ -17,19 +17,26 @@ load_dotenv(SCRAPER_BASE / ".env")
 
 DB_PATH = SCRAPER_BASE / "tweets.db"
 
-import argparse as _argparse
-_parser = _argparse.ArgumentParser(add_help=False)
-_parser.add_argument("--account", default="aleabitoreddit")
-_args, _ = _parser.parse_known_args()
-ACCOUNT = _args.account
-
 from utils import load_account_config as _load_cfg
-try:
-    _cfg = _load_cfg(ACCOUNT, SCRAPER_BASE)
-    DISCORD_WEBHOOK = _cfg.get("discord_webhook") or os.environ.get("DISCORD_WEBHOOK_SERENITY")
-except Exception as e:
-    print(f"Warning: could not load account config for {ACCOUNT}: {e}", file=sys.stderr)
-    DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_SERENITY")
+
+
+def _parse_account_arg() -> tuple[str, str]:
+    """Parse --account from argv without consuming other flags. Returns (account, webhook)."""
+    import argparse as _argparse
+    _parser = _argparse.ArgumentParser(add_help=False)
+    _parser.add_argument("--account", default="aleabitoreddit")
+    _args, _ = _parser.parse_known_args()
+    account = _args.account
+    try:
+        _cfg = _load_cfg(account, SCRAPER_BASE)
+        webhook = _cfg.get("discord_webhook") or os.environ.get("DISCORD_WEBHOOK_SERENITY", "")
+    except Exception as e:
+        print(f"Warning: could not load account config for {account}: {e}", file=sys.stderr)
+        webhook = os.environ.get("DISCORD_WEBHOOK_SERENITY", "")
+    return account, webhook
+
+
+ACCOUNT, DISCORD_WEBHOOK = _parse_account_arg()
 
 async def post_to_discord(tweet):
     if not DISCORD_WEBHOOK:

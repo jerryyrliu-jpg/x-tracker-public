@@ -42,7 +42,8 @@ class NewsExtractor:
         prompt = EXTRACTION_PROMPT.format(text=text.replace("{", "{{").replace("}", "}}"))
         result = subprocess.run(
             ["gemini", "-p", prompt],
-            capture_output=True, text=True, encoding="utf-8"
+            capture_output=True, text=True, encoding="utf-8",
+            timeout=120,
         )
         if result.returncode != 0:
             raise RuntimeError(f"gemini CLI error: {result.stderr[:200]}")
@@ -113,9 +114,8 @@ class NewsExtractor:
                             skipped += 1
 
                         if rel_id is not None:
-                            # INSERT OR REPLACE — ensures news evidence not silently dropped
                             conn.execute("""
-                                INSERT OR REPLACE INTO industry_relation_evidence
+                                INSERT OR IGNORE INTO industry_relation_evidence
                                 (relation_id, tweet_id, snippet, source)
                                 VALUES (?, ?, ?, 'news')
                             """, (rel_id, a["url"], a["title"][:200]))

@@ -272,14 +272,17 @@ def summarize_recent(account: str = "aleabitoreddit", days: int = 7, force: bool
 
 
 
+_CACHE_TTL_DAYS = 3
+
+
 def get_cache(topic, account="aleabitoreddit", days=30, conn=None):
     """Retrieve cached result. Cache key is account:topic:days.
-    Also used as freshness window: entries older than `days` days are ignored."""
+    TTL is fixed at _CACHE_TTL_DAYS (not tied to query window)."""
     should_close = conn is None
     if conn is None:
         conn = get_db_conn(DB_PATH)
     cache_key = f"{account}:{topic}:{days}"
-    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now() - timedelta(days=_CACHE_TTL_DAYS)).isoformat()
     row = conn.execute(
         "SELECT result_json FROM query_cache WHERE topic = ? AND updated_at >= ?",
         (cache_key, cutoff),

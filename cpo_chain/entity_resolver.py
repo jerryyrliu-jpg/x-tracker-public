@@ -77,7 +77,7 @@ class EntityResolver:
                     conn.execute("INSERT OR IGNORE INTO industry_entity_aliases (alias, company_id, status) VALUES (?, ?, ?)", (alias, company_id, 'active'))
                     if self._db_cache is not None and alias not in self._db_cache:
                         self._db_cache.append(alias)
-                
+                conn.commit()
                 return company_id, standard_name, 'active'
 
         # 2. Check Database Aliases (Exact Match)
@@ -112,6 +112,8 @@ class EntityResolver:
         
         cursor = conn.execute("INSERT INTO industry_entities (name, ticker) VALUES (?, ?)", (name, ticker))
         new_id = cursor.lastrowid
-        if self._db_cache is not None: self._db_cache.append(name)
+        if self._db_cache is not None:
+            self._db_cache.append(name)
         conn.execute("INSERT INTO industry_entity_aliases (alias, company_id, status) VALUES (?, ?, ?)", (name, new_id, 'needs_review'))
+        conn.commit()
         return new_id, name, 'needs_review'

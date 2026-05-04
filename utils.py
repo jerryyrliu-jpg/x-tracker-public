@@ -43,7 +43,8 @@ class PIDLock:
                     print(f"⚠️ Stale lock found (PID {pid}, >{self.timeout_mins}m). Killing stale process...")
                     try:
                         os.kill(pid, 9)
-                    except: pass
+                    except OSError:
+                        pass
                     self.lock_path.unlink()
                 else:
                     return False
@@ -74,8 +75,10 @@ class Metrics:
 
     def _load(self):
         if self.path.exists():
-            try: return json.loads(self.path.read_text())
-            except: pass
+            try:
+                return json.loads(self.path.read_text())
+            except (OSError, json.JSONDecodeError):
+                pass
         return {"success": 0, "fail": 0, "total_runtime": 0, "avg_runtime": 0, "last_reset": time.time()}
 
     def report(self, success: bool, runtime: float):

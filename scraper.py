@@ -201,7 +201,7 @@ async def run(account_cfg: dict, dry_run: bool = False):
         if dry_run:
             print(f"  [dry-run] {date_str}: {tweet.rawContent[:80]}...")
         else:
-            await send_discord(webhook, f"{text}\n{tweet_url}", image_paths)
+            await send_discord(webhook, f"{text}\n{tweet_url}")
             await asyncio.sleep(1)
 
     save_since_id(account, new_tweets[0].id)
