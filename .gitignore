@@ -3,6 +3,9 @@
 *.lock
 metrics.json
 debug_structure.py
+debug*.py
+debug*.png
+.DS_Store
 chrome.log
 __pycache__/
 .env

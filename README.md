@@ -70,17 +70,25 @@ EDGAR_USER_AGENT=x-tracker your@email.com  # SEC EDGAR 必填 User-Agent
 ```
 
 ### `accounts.yaml`
+
+Set webhook URLs via environment variables (never hardcode them):
+
 ```yaml
 accounts:
   aleabitoreddit:
     enabled: true
-    discord_webhook: https://discord.com/api/webhooks/...
+    discord_webhook_env: DISCORD_WEBHOOK_ALEABITOREDDIT
   CKCapitalxx:
     enabled: true
-    discord_webhook: ...
+    discord_webhook_env: DISCORD_WEBHOOK_CKCAPITALXX
   gbstocks:
     enabled: true
-    discord_webhook: ...
+    discord_webhook_env: DISCORD_WEBHOOK_GBSTOCKS
+```
+
+Export each variable in your shell or `.env` file:
+```bash
+export DISCORD_WEBHOOK_ALEABITOREDDIT="https://discord.com/api/webhooks/..."
 ```
 
 ---
