@@ -11,3 +11,8 @@ cpo_chain/output/
 *.db
 graph.html
 .worktrees/
+temp_acc.txt
+test_lite.json
+.last_guid
+.last_monthly_summary
+logs/
