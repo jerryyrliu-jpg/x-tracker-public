@@ -56,10 +56,14 @@ class RelationItem(pydantic.BaseModel):
     confidence: float
     confidence_reason: str
 
+_ISOLATION_RE = re.compile(r'</?(?:TWEET_DATA|NEWS_DATA)>', re.IGNORECASE)
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def call_gemini(tweets_batch: list[dict]) -> list[dict]:
     """Call Gemini via CLI and extract JSON relations."""
-    content = "\n---\n".join([f"ID: {t['id']}\nText: {t['text']}" for t in tweets_batch])
+    safe_batch = [{"id": t["id"], "text": _ISOLATION_RE.sub('', t["text"])} for t in tweets_batch]
+    content = json.dumps(safe_batch, ensure_ascii=False)
     prompt = f"{prompts.SYSTEM_INSTRUCTION}\n\n{prompts.build_universal_extraction_prompt(content)}"
 
     try:

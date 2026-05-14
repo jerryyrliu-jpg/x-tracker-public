@@ -78,7 +78,7 @@ async def run_monthly_summary_if_due():
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_MONTHLY_TIMEOUT)
             if proc.returncode != 0:
-                logger.error(f"Monthly summary failed for {account}: {stderr.decode(errors='replace')}")
+                logger.error(f"Monthly summary failed for {account}: {stderr.decode(errors='replace')[:500]}")
             else:
                 logger.info(f"✅ Monthly summary done for {account}: {stdout.decode(errors='replace')[:200]}")
                 any_success = True
@@ -110,13 +110,13 @@ async def run_scraper(account: str = "aleabitoreddit"):
                 logger.info(f"✅ Success: New {res['new_count']} tweets ({runtime:.1f}s)")
                 return True, res
             except Exception:
-                logger.error(f"❌ JSON Parse Error: {stdout.decode(errors='replace')}")
+                logger.error(f"❌ JSON Parse Error: {stdout.decode(errors='replace')[:500]}")
                 metrics.report(False, runtime)
         elif proc.returncode == 2:
             logger.warning(f"⚠️ Potential structure change detected!")
             await send_discord(DISCORD_WEBHOOK, "🚨 **X-Tracker Alert**: Twitter structure change detected!")
         else:
-            logger.error(f"❌ Scraper failed (Code {proc.returncode}): {stderr.decode(errors='replace')}")
+            logger.error(f"❌ Scraper failed (Code {proc.returncode}): {stderr.decode(errors='replace')[:500]}")
             metrics.report(False, runtime)
             
     except asyncio.TimeoutError:
@@ -166,7 +166,7 @@ async def main():
                                 await send_discord(DISCORD_WEBHOOK, "♻️ **Self-Healing**: Chrome restarted successfully.")
                                 fail_count = 0
                             else:
-                                logger.error(f"❌ Restart script failed: {stderr.decode(errors='replace')}")
+                                logger.error(f"❌ Restart script failed: {stderr.decode(errors='replace')[:500]}")
                         except asyncio.TimeoutError:
                             logger.error("❌ Restart script timed out (>60s).")
                         except Exception as e:

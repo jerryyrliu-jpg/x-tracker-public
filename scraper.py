@@ -15,8 +15,11 @@ import sqlite3
 import sys
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urlparse
 
 import httpx
+
+_ALLOWED_IMAGE_HOSTS = frozenset({'pbs.twimg.com', 'video.twimg.com', 't.co'})
 import yaml
 from dotenv import load_dotenv
 from twscrape import API
@@ -139,6 +142,9 @@ def save_since_id(account: str, tweet_id):
 
 
 async def download_image(url: str, path: Path):
+    host = urlparse(url).hostname or ''
+    if host not in _ALLOWED_IMAGE_HOSTS:
+        raise ValueError(f"Image download blocked: untrusted host {host!r}")
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(url)
         path.parent.mkdir(parents=True, exist_ok=True)

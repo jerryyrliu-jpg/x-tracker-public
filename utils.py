@@ -129,4 +129,4 @@ async def send_discord(webhook: str, content: str = None, embeds: list[dict] = N
         async with httpx.AsyncClient(timeout=10) as client:
             await client.post(webhook, json=payload)
     except Exception as e:
-        print(f"send_discord failed: {e}", file=sys.stderr)
+        print(f"send_discord failed: {type(e).__name__}", file=sys.stderr)

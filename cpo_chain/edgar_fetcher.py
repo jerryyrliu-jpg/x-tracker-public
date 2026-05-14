@@ -34,6 +34,10 @@ _edgar_bucket = _TokenBucket(rate=8)
 class EdgarFetcher:
     FULLTEXT_URL = "https://efts.sec.gov/LATEST/search-index"
     HEADERS = {"User-Agent": os.getenv("EDGAR_USER_AGENT", "x-tracker contact@example.com")}
+
+    def __init__(self):
+        if not os.getenv("EDGAR_USER_AGENT"):
+            logger.warning("EDGAR_USER_AGENT env var not set — using placeholder UA which may be rate-limited by SEC")
     MAX_RETRIES = 3
 
     def search_relation(self, supplier: str, customer: str) -> list[dict]:

@@ -13,25 +13,33 @@ import yaml
 
 _accounts_yaml_lock = asyncio.Lock()
 
-TICKER_RE = re.compile(r'^[A-Z0-9.\-]{1,10}$')
+TICKER_RE = re.compile(r'^[A-Z\$][A-Z0-9.\-]{0,9}$')
 DAYS_RE = re.compile(r'\bdays?:(\S+)\b', re.IGNORECASE)
 
 _COOLDOWN_SECS = 60
-_user_cooldowns: dict[int, float] = {}  # user_id → last_call_timestamp
+_CHAIN_COOLDOWN_SECS = 10
+_STATS_COOLDOWN_SECS = 5
+_user_cooldowns: dict[int, float] = {}   # heavy ops (Gemini)
+_chain_cooldowns: dict[int, float] = {}  # /chain, /supply
+_stats_cooldowns: dict[int, float] = {}  # /stats
 
 
-def _try_cooldown(user_id: int) -> float:
-    """Atomically check and mark cooldown. Returns 0.0 if allowed (and records), else remaining seconds.
+def _try_cooldown(user_id: int, cooldown_dict: dict = None, secs: int = None) -> float:
+    """Atomically check and mark cooldown. Returns 0.0 if allowed, else remaining seconds.
     Also prunes entries older than 10× the cooldown window."""
     import time
+    if cooldown_dict is None:
+        cooldown_dict = _user_cooldowns
+    if secs is None:
+        secs = _COOLDOWN_SECS
     now = time.time()
-    stale = [uid for uid, ts in _user_cooldowns.items() if now - ts > _COOLDOWN_SECS * 10]
+    stale = [uid for uid, ts in cooldown_dict.items() if now - ts > secs * 10]
     for uid in stale:
-        del _user_cooldowns[uid]
-    remaining = _COOLDOWN_SECS - (now - _user_cooldowns.get(user_id, 0.0))
+        del cooldown_dict[uid]
+    remaining = secs - (now - cooldown_dict.get(user_id, 0.0))
     if remaining > 0:
         return remaining
-    _user_cooldowns[user_id] = now
+    cooldown_dict[user_id] = now
     return 0.0
 
 SCRAPER_BASE = Path(__file__).resolve().parent
@@ -74,7 +82,8 @@ def parse_ticker_message(raw: str) -> tuple[str, int]:
 async def _run_daily_summary_for_account(account: str, display_name: str, webhook_url: str) -> None:
     """Run daily summary for a single account and send to webhook."""
     today = datetime.now(TAIPEI).strftime("%Y-%m-%d")
-    out_file = f"/tmp/auto_daily_{account}_{datetime.now(TAIPEI).strftime('%Y%m%d')}.json"
+    _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_daily_")
+    os.close(_fd)
     cmd = [
         sys.executable,
         str(SCRAPER_BASE / "query_topic.py"),
@@ -381,7 +390,8 @@ async def summary_prefix(ctx, days: int = 1):
     print(f"[bot] $summary_test called with days={days}")
     await ctx.send(f"正在為您準備最近 {days} 天的摘要分析... (這可能需要一點時間)")
 
-    out_file = f"/tmp/prefix_summary_{days}_{ctx.message.id}.json"
+    _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_")
+    os.close(_fd)
     cmd = [
         sys.executable,
         str(SCRAPER_BASE / "query_topic.py"),
@@ -461,6 +471,14 @@ def format_confidence(conf: float, edgar: float, news: float) -> str:
     company="查詢特定公司"
 )
 async def supply_query(interaction: discord.Interaction, industry: str = "CPO", tier: int = None, country: str = None, company: str = None):
+    remaining = _try_cooldown(interaction.user.id, _chain_cooldowns, _CHAIN_COOLDOWN_SECS)
+    if remaining > 0:
+        await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
+        return
+    industry = industry.strip()[:30]
+    if not re.match(r'^[A-Za-z0-9_\- ]{1,30}$', industry):
+        await interaction.response.send_message("⚠️ 無效的產業語境格式。", ephemeral=True)
+        return
     await interaction.response.defer(thinking=True)
     cache_path = SCRAPER_BASE / "cpo_chain" / "output" / "usci_tiers_cache.json"
     
@@ -560,14 +578,20 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
         await interaction.followup.send(output_text[:2000])
 
     except Exception as e:
-        print(f"Error in /supply: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error in /supply: {type(e).__name__}", file=sys.stderr)
         await interaction.followup.send("❌ 讀取 USCI 快取失敗。")
 
 @tree.command(name="chain", description="列出 CPO 供應鏈上中下游公司全景")
 @app_commands.describe(industry="產業語境 (預設 CPO)")
 async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
+    remaining = _try_cooldown(interaction.user.id, _chain_cooldowns, _CHAIN_COOLDOWN_SECS)
+    if remaining > 0:
+        await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
+        return
+    industry = industry.strip()[:30]
+    if not re.match(r'^[A-Za-z0-9_\- ]{1,30}$', industry):
+        await interaction.response.send_message("⚠️ 無效的產業語境格式。", ephemeral=True)
+        return
     await interaction.response.defer(thinking=True)
     db_path = SCRAPER_BASE / "tweets.db"
     conn = None
@@ -656,8 +680,8 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
             msg = msg[:1947] + "…"
         await interaction.followup.send(msg)
 
-    except Exception:
-        import traceback; traceback.print_exc()
+    except Exception as e:
+        print(f"Error in /chain: {type(e).__name__}", file=sys.stderr)
         await interaction.followup.send("❌ 查詢失敗。")
     finally:
         if conn:
@@ -737,6 +761,10 @@ async def account_toggle(interaction: discord.Interaction, action: str, name: st
 
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")
 async def stats(interaction: discord.Interaction):
+    remaining = _try_cooldown(interaction.user.id, _stats_cooldowns, _STATS_COOLDOWN_SECS)
+    if remaining > 0:
+        await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
+        return
     await interaction.response.defer(thinking=True)
     conn = get_db_conn(SCRAPER_BASE / "tweets.db")
     try:
@@ -767,7 +795,8 @@ async def summary(interaction: discord.Interaction, days: int = 7):
         return
     days = max(1, min(days, 90))
     await interaction.response.defer(thinking=True)
-    out_file = f"/tmp/bot_summary_{days}_{interaction.id}.json"
+    _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_")
+    os.close(_fd)
     cmd = [
         sys.executable,
         str(SCRAPER_BASE / "query_topic.py"),
@@ -826,7 +855,8 @@ async def on_message(message):
                 await message.channel.send(f"⏳ 請等 {remaining:.0f} 秒後再試。")
                 return
             safe_ticker = re.sub(r'[^A-Z0-9]', '_', ticker)
-            out_file = f"/tmp/bot_{safe_ticker}_{message.id}.json"
+            _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_")
+            os.close(_fd)
             cmd = [
                 sys.executable,
                 str(SCRAPER_BASE / "query_topic.py"),
@@ -888,7 +918,8 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         return
 
     safe_ticker = re.sub(r"[^A-Z0-9]", "_", ticker)
-    out_file = f"/tmp/bot_{safe_ticker}_{interaction.id}.json"
+    _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_")
+    os.close(_fd)
     cmd = [
         sys.executable,
         str(SCRAPER_BASE / "query_topic.py"),

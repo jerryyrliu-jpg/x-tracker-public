@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import re
 import sqlite3
 import sys
 import os
@@ -10,6 +11,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import yaml
 from utils import load_account_config, send_discord
+
+_ISOLATION_TAGS = re.compile(r'</?(?:TWEET_DATA|NEWS_DATA)>', re.IGNORECASE)
 
 SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
@@ -87,7 +90,7 @@ async def main():
         print(f"No tweets found for @{account_name} in last {args.days} days.")
         return
 
-    tweets_text = "\n---\n".join(f"[{r[0]}] {r[1]}" for r in rows)
+    tweets_text = "\n---\n".join(f"[{r[0]}] {_ISOLATION_TAGS.sub('', r[1])}" for r in rows)
     print(f"Analyzing {len(rows)} tweets for @{account_name}...")
 
     summary = generate_summary(account_cfg, tweets_text)

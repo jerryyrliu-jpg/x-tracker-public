@@ -41,11 +41,13 @@ class EntityResolver:
                 
                 ticker = None
                 if "P249" in claims:
-                    ticker = claims["P249"][0]["mainsnak"]["datavalue"]["value"]
-                
+                    raw_ticker = claims["P249"][0]["mainsnak"]["datavalue"]["value"]
+                    if isinstance(raw_ticker, str) and 1 <= len(raw_ticker) <= 10:
+                        ticker = raw_ticker
+
                 return {"ticker": ticker}
         except Exception as e:
-            print(f"Wikidata API Error: {e}")
+            print(f"Wikidata API Error: {type(e).__name__}")
         return {}
         
     def resolve(self, conn: sqlite3.Connection, raw_name: str) -> tuple[int, str, str]:

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import yaml
 
-_TOPIC_RE = re.compile(r'^[A-Za-z0-9.$\-]{1,20}$')
+_TOPIC_RE = re.compile(r'^[A-Za-z\$][A-Za-z0-9.\-]{0,19}$')
 _ISOLATION_TAGS = re.compile(r'</?(?:TWEET_DATA|NEWS_DATA)>', re.IGNORECASE)
 
 
