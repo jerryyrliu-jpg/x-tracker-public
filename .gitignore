@@ -16,3 +16,5 @@ test_lite.json
 .last_guid
 .last_monthly_summary
 logs/
+*.bak
+*.db.bak.*

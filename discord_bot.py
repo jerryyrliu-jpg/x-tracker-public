@@ -112,8 +112,8 @@ async def _run_daily_summary_for_account(account: str, display_name: str, webhoo
             if os.path.exists(out_file):
                 os.unlink(out_file)
     else:
-        print(f"[auto-daily] {account} query_topic failed: {stderr.decode(errors="replace")}")
-        await send_discord(webhook_url, f"⚠️ @{account} 每日摘要失敗。\n`{stderr.decode(errors="replace")[:200]}`")
+        print(f"[auto-daily] {account} query_topic failed: {stderr.decode(errors='replace')}")
+        await send_discord(webhook_url, f"⚠️ @{account} 每日摘要失敗，請查看伺服器日誌。")
 
 
 async def _run_daily_summary(accounts_cfg: dict, default_webhook: str) -> None:
@@ -187,7 +187,7 @@ async def _run_monthly_summary(webhook_url: str) -> None:
             accounts = list(yaml.safe_load(f).get("accounts", {}).keys())
     except Exception as e:
         print(f"[auto-monthly] failed to load accounts.yaml: {e}")
-        await send_discord(webhook_url, f"⚠️ 月度摘要失敗：無法讀取 accounts.yaml。\n`{e}`")
+        await send_discord(webhook_url, "⚠️ 月度摘要失敗：無法讀取 accounts.yaml，請查看伺服器日誌。")
         return
     for account in accounts:
         cmd = [
@@ -212,7 +212,7 @@ async def _run_monthly_summary(webhook_url: str) -> None:
         if proc.returncode != 0:
             err = stderr.decode(errors='replace')[:300]
             print(f"[auto-monthly] {account} failed: {err}")
-            await send_discord(webhook_url, f"⚠️ 月度摘要失敗 (@{account})，請查看伺服器日誌。\n`{err}`")
+            await send_discord(webhook_url, f"⚠️ 月度摘要失敗 (@{account})，請查看伺服器日誌。")
         else:
             print(f"[auto-monthly] {account} done.")
 
@@ -420,7 +420,8 @@ async def summary_prefix(ctx, days: int = 1):
             if os.path.exists(out_file):
                 os.unlink(out_file)
     else:
-        await ctx.send(f"分析執行失敗: {stderr.decode(errors='replace')[:200]}")
+        print(f"[summary_test] failed: {stderr.decode(errors='replace')[:200]}")
+        await ctx.send("分析執行失敗，請查看伺服器日誌。")
 
 @bot.command(name="sync")
 @commands.is_owner()
