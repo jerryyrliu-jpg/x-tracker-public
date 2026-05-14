@@ -7,6 +7,14 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import yaml
 
+_TOPIC_RE = re.compile(r'^[A-Za-z0-9.$\-]{1,20}$')
+_ISOLATION_TAGS = re.compile(r'</?(?:TWEET_DATA|NEWS_DATA)>', re.IGNORECASE)
+
+
+def _sanitize_text(text: str) -> str:
+    """Strip isolation tag literals from tweet/news text to prevent tag-injection breakout."""
+    return _ISOLATION_TAGS.sub('', text)
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -53,7 +61,7 @@ def _group_by_week(tweets: list) -> dict:
     ungrouped = []
     for r in tweets:
         tid, created_at, text = r[0], r[1], r[2]
-        entry = {"id": tid, "date": created_at[:10], "text": text}
+        entry = {"id": tid, "date": created_at[:10], "text": _sanitize_text(text)}
         try:
             dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
             week_label = f"{dt.isocalendar().year}-W{dt.isocalendar().week:02d}"
@@ -145,9 +153,9 @@ _DEFAULT_ACCOUNT = "aleabitoreddit"
 
 def _run_gemini_cli(prompt: str, timeout: int = 300) -> str:
     """Run Gemini via CLI subprocess."""
-    cmd = ["gemini", "--model", _GEMINI_MODEL, "-p", prompt]
+    cmd = ["gemini", "--model", _GEMINI_MODEL]
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout)
+        res = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8", timeout=timeout)
     except subprocess.TimeoutExpired:
         logger.warning("Gemini CLI call timed out.")
         return ""
@@ -217,7 +225,7 @@ def build_all_tickers_prompt(tweets: list, days: int) -> str:
     for r in tweets:
         tid, created_at, text = r[0], r[1], r[2]
         day_key = (created_at or "unknown")[:10]  # YYYY-MM-DD
-        day_groups[day_key].append({"id": tid, "text": text})
+        day_groups[day_key].append({"id": tid, "text": _sanitize_text(text)})
 
     grouped_json: dict = {}
     for day in sorted(day_groups):
@@ -343,6 +351,10 @@ def _parse_sentiment_json(raw: str) -> dict:
 
 def analyze_topic(topic: str, account: str = "aleabitoreddit", days: int = 30, force: bool = False) -> dict | None:
     """Full analysis pipeline. Returns result dict or None if no tweets / Gemini failure."""
+    if not _TOPIC_RE.match(topic.strip()):
+        logger.warning("analyze_topic: rejected invalid topic %r", topic[:50])
+        return None
+    topic = topic.strip()
     conn = get_db_conn(DB_PATH)
     tweets_by_account = None
     try:

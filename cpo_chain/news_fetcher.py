@@ -16,7 +16,7 @@ class GoogleNewsRSSFetcher:
     RSS_URL = "https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
 
     def fetch(self, company_a: str, company_b: str, days: int = 30) -> list[dict]:
-        query = quote_plus(f'"{company_a}" "{company_b}" supply chain')
+        query = quote_plus(f'"{company_a[:80]}" "{company_b[:80]}" supply chain')
         url = self.RSS_URL.format(query=query)
         feed = feedparser.parse(url)
 

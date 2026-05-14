@@ -102,7 +102,7 @@ launchctl load ~/Library/LaunchAgents/com.xtracker.monitor.plist
 # 查看狀態
 launchctl list | grep xtracker
 # 查看 log
-tail -f /Users/yj/Desktop/PyProjects/X-tracker/logs/monitor_active.log
+tail -f logs/monitor_active.log
 ```
 
 ### 方式 B — 手動背景執行
@@ -115,8 +115,10 @@ nohup python3 discord_bot.py > logs/discord_bot.log 2>&1 &
 ### Dashboard
 ```bash
 source venv/bin/activate
-streamlit run dashboard.py
+streamlit run dashboard.py --server.address 127.0.0.1
 ```
+
+> ⚠️ Always run with `--server.address 127.0.0.1` to bind to localhost only. Without this flag, Streamlit defaults to all interfaces and exposes the dashboard (and Gemini API costs) to anyone on the network.
 
 ---
 

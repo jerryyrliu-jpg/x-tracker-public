@@ -1,8 +1,12 @@
 import difflib
+import re
 import sqlite3
 import yaml
 import requests
 from pathlib import Path
+
+_ENTITY_ID_RE = re.compile(r'^Q\d+$')
+_MAX_ENTITY_NAME_LEN = 80
 
 class EntityResolver:
     def __init__(self, db_path: Path, keywords_path: Path):
@@ -27,6 +31,8 @@ class EntityResolver:
             data = resp.json()
             if data.get("search"):
                 entity_id = data["search"][0]["id"]
+                if not _ENTITY_ID_RE.match(entity_id):
+                    return {}
                 # Get detailed claims (P249 is ticker symbol, P452 is industry)
                 detail_url = f"https://www.wikidata.org/wiki/Special:EntityData/{entity_id}.json"
                 detail_resp = requests.get(detail_url, timeout=5)
@@ -46,7 +52,7 @@ class EntityResolver:
         """
         Resolve raw_name to (company_id, standardized_name, status).
         """
-        name = raw_name.strip()
+        name = raw_name.strip()[:_MAX_ENTITY_NAME_LEN]
         
         # 1. Check Static Seed Dictionary
         for standard_name, aliases in self.seed_aliases.items():

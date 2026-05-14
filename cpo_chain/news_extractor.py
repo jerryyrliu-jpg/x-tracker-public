@@ -6,6 +6,8 @@ import subprocess
 from .entity_resolver import EntityResolver
 from .company_ticker_mapper import CompanyTickerMapper
 
+_ISOLATION_TAGS = re.compile(r'</?(?:TWEET_DATA|NEWS_DATA)>', re.IGNORECASE)
+
 logger = logging.getLogger("news_extractor")
 
 INDUSTRY_CONTEXTS = ["CPO", "HBM", "AI_Server", "Liquid_Cooling", "Advanced_Packaging", "Other"]
@@ -35,10 +37,12 @@ class NewsExtractor:
 
     def extract_from_article(self, article: dict) -> list[dict]:
         """Call gemini CLI to extract relations. Raises on error."""
-        text = f"{article['title'][:300]}. {article.get('summary', '')[:280]}"
+        raw = f"{article['title'][:300]}. {article.get('summary', '')[:280]}"
+        text = _ISOLATION_TAGS.sub('', raw)
         prompt = _EXTRACTION_PROMPT_PREFIX + text + "\n</NEWS_DATA>"
         result = subprocess.run(
-            ["gemini", "-p", prompt],
+            ["gemini"],
+            input=prompt,
             capture_output=True, text=True, encoding="utf-8",
             timeout=120,
         )
@@ -115,7 +119,7 @@ class NewsExtractor:
                                 INSERT OR IGNORE INTO industry_relation_evidence
                                 (relation_id, tweet_id, snippet, source)
                                 VALUES (?, ?, ?, 'news')
-                            """, (rel_id, a["url"], a["title"][:200]))
+                            """, (rel_id, a["url"][:500], a["title"][:200]))
                             has_relations = True
 
                     except Exception as e:

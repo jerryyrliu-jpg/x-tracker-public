@@ -124,7 +124,13 @@ with tab2:
 
     col_a, col_b = st.columns([1, 4])
     with col_a:
-        if st.button("🔄 重新生成圖譜"):
+        if "last_regen_time" not in st.session_state:
+            st.session_state["last_regen_time"] = 0.0
+        _REGEN_COOLDOWN = 60
+        _now = datetime.now().timestamp()
+        _cooldown_ok = (_now - st.session_state["last_regen_time"]) >= _REGEN_COOLDOWN
+        if st.button("🔄 重新生成圖譜", disabled=not _cooldown_ok):
+            st.session_state["last_regen_time"] = _now
             with st.spinner("正在從資料庫重新匯出供應鏈圖譜..."):
                 try:
                     r1 = subprocess.run(

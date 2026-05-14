@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 def test_repro():
-    cache_path = Path("/Users/yj/Desktop/PyProjects/X-tracker/cpo_chain/output/usci_tiers_cache.json")
+    cache_path = Path(__file__).resolve().parent.parent / "cpo_chain" / "output" / "usci_tiers_cache.json"
     if not cache_path.exists():
         print("Cache file not found")
         return

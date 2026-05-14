@@ -38,6 +38,8 @@ class EdgarFetcher:
 
     def search_relation(self, supplier: str, customer: str) -> list[dict]:
         """搜尋兩公司在 SEC 文件中的共同出現，含 exponential backoff"""
+        supplier = supplier[:80]
+        customer = customer[:80]
         since = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
         params = {
             "q": f'"{supplier}" "{customer}"',
