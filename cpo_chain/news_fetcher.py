@@ -1,5 +1,6 @@
 
 import feedparser
+import requests
 import sqlite3
 import logging
 from datetime import datetime, timezone, timedelta
@@ -7,6 +8,18 @@ from typing import Protocol, Optional
 from urllib.parse import quote_plus
 
 logger = logging.getLogger("news_fetcher")
+
+
+def _fetch_feed(url: str, timeout: int = 10):
+    try:
+        resp = requests.get(url, timeout=timeout, headers={"User-Agent": "x-tracker/1.0"})
+        return feedparser.parse(resp.content)
+    except Exception as e:
+        logger.warning("Feed fetch error: %s", type(e).__name__)
+        result = feedparser.parse("")
+        result["bozo"] = True
+        result["bozo_exception"] = e
+        return result
 
 class NewsFetcher(Protocol):
     def fetch(self, company_a: str, company_b: str) -> list[dict]: ...
@@ -18,7 +31,7 @@ class GoogleNewsRSSFetcher:
     def fetch(self, company_a: str, company_b: str, days: int = 30) -> list[dict]:
         query = quote_plus(f'"{company_a[:80]}" "{company_b[:80]}" supply chain')
         url = self.RSS_URL.format(query=query)
-        feed = feedparser.parse(url)
+        feed = _fetch_feed(url)
 
         if feed.get("bozo"):
             logger.warning(f"Google News RSS bozo: {feed.get('bozo_exception')}")
@@ -53,7 +66,7 @@ class YahooRSSFetcher:
 
     def fetch(self, ticker_a: str, company_b: str, days: int = 30) -> list[dict]:
         url = self.RSS_URL.format(ticker=ticker_a)
-        feed = feedparser.parse(url)
+        feed = _fetch_feed(url)
         if feed.get("bozo"):
             logger.warning(f"Yahoo RSS bozo: {feed.get('bozo_exception')}")
             return []
@@ -93,7 +106,7 @@ class CompositeNewsFetcher:
     def boost_score(self, company_a: str, company_b: str, conn: Optional[sqlite3.Connection] = None) -> tuple[float, str]:
         # 1. 嘗試 Google News（單次 fetch，不重複）
         results = self.google.fetch(company_a, company_b)
-        google_bozo = not results and feedparser.parse(
+        google_bozo = not results and _fetch_feed(
             self.google.RSS_URL.format(query=quote_plus(f'"{company_a}" "{company_b}" supply chain'))
         ).get("bozo", False)
 

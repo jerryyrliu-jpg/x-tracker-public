@@ -124,7 +124,7 @@ async def send_discord(webhook: str, content: str = None, embeds: list[dict] = N
         payload["embeds"] = embeds
     if not payload:
         return
-        
+    payload["allowed_mentions"] = {"parse": []}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             await client.post(webhook, json=payload)

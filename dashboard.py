@@ -36,7 +36,11 @@ with st.sidebar:
     topic = st.text_input("關鍵字 / 標的", "LITE")
     days = st.slider("查詢天數", 7, 180, 60)
     force_refresh = st.checkbox("🔁 強制重新分析（忽略快取）", value=False)
-    run_btn = st.button("🚀 開始深度分析", type="primary")
+    if "last_analyze_time" not in st.session_state:
+        st.session_state["last_analyze_time"] = 0.0
+    _analyze_now = datetime.now().timestamp()
+    _analyze_ok = (_analyze_now - st.session_state["last_analyze_time"]) >= 30
+    run_btn = st.button("🚀 開始深度分析", type="primary", disabled=not _analyze_ok)
     st.divider()
     auto_refresh = st.toggle("🔄 Auto-refresh (60s)", value=False)
 
@@ -48,6 +52,7 @@ tab1, tab2 = st.tabs(["📈 個股深度分析", "🕸️ 股市知識圖譜"])
 
 with tab1:
     if run_btn:
+        st.session_state["last_analyze_time"] = datetime.now().timestamp()
         with st.spinner(f"正在以最新推文為基準分析 {topic} 的觀點演變..."):
             result = analyze_topic(topic, account=account, days=days, force=force_refresh)
 

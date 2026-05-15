@@ -45,7 +45,7 @@ async def post_to_discord(tweet):
     msg = f"**@{ACCOUNT}** `{tweet['time']}`\n{tweet['text']}\nhttps://x.com/{ACCOUNT}/status/{tweet['id']}"
     async with httpx.AsyncClient() as client:
         try:
-            r = await client.post(DISCORD_WEBHOOK, json={"content": msg}, timeout=15)
+            r = await client.post(DISCORD_WEBHOOK, json={"content": msg, "allowed_mentions": {"parse": []}}, timeout=15)
             if r.status_code not in (200, 204):
                 print(f"⚠️ Discord HTTP {r.status_code}: {r.text[:200]}", file=sys.stderr)
         except Exception as e:
@@ -124,7 +124,7 @@ async def scrape():
 
                         time_el = await t.query_selector("time")
                         tm = await time_el.get_attribute("datetime") if time_el else datetime.now().isoformat()
-                        print(f"   - [ID:{tid}] {tm} | {txt[:30]}...")
+                        print(f"   - [ID:{tid}] {tm} | {txt[:30]}...", file=sys.stderr)
 
                         cursor = conn.cursor()
                         cursor.execute(
@@ -133,7 +133,7 @@ async def scrape():
                         )
 
                         if cursor.rowcount > 0:
-                            print(f"     🆕 NEW TWEET!")
+                            print(f"     🆕 NEW TWEET!", file=sys.stderr)
                             new_count += 1
                             await post_to_discord({"id": tid, "text": txt, "time": tm})
                     except Exception as e:

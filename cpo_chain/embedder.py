@@ -16,7 +16,9 @@ class UniversalEmbedder:
         try:
             print(f"Loading embedding model: {self.model_name}...")
             # trust_remote_code=True runs arbitrary Python from the HuggingFace model repo.
-            # Pin to a specific revision SHA for supply-chain security in production.
+            # Pin revision SHA for supply-chain security, e.g.:
+            #   SentenceTransformer(model_name, trust_remote_code=True, revision="<git-sha>")
+            # Get SHA via: huggingface-cli tag nomic-ai/nomic-embed-text-v1
             self.model = SentenceTransformer(self.model_name, trust_remote_code=True)
             print("Model loaded successfully.")
         except Exception as e:

@@ -10,7 +10,7 @@ from .news_fetcher import CompositeNewsFetcher
 from .company_ticker_mapper import CompanyTickerMapper
 
 logger = logging.getLogger("confidence_updater")
-LOCK_FILE = "/tmp/x-tracker-confidence.lock"
+LOCK_FILE = str(Path(__file__).resolve().parent.parent / ".confidence_updater.lock")
 
 class ConfidenceUpdater:
     BATCH_SIZE = 20

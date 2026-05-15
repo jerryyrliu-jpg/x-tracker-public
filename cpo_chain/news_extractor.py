@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import json
 import logging
@@ -40,8 +41,9 @@ class NewsExtractor:
         raw = f"{article['title'][:300]}. {article.get('summary', '')[:280]}"
         text = _ISOLATION_TAGS.sub('', raw)
         prompt = _EXTRACTION_PROMPT_PREFIX + text + "\n</NEWS_DATA>"
+        _gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
         result = subprocess.run(
-            ["gemini"],
+            ["gemini", "--model", _gemini_model],
             input=prompt,
             capture_output=True, text=True, encoding="utf-8",
             timeout=120,

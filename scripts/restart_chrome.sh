@@ -17,7 +17,7 @@ find "$PROJECT_DIR/.profiles/x_scraper" -name "SingletonLock" -delete 2>/dev/nul
   --user-data-dir="$PROJECT_DIR/.profiles/x_scraper" \
   --headless=old \
   --disable-gpu \
-  --remote-allow-origins="*" > "$PROJECT_DIR/chrome.log" 2>&1 &
+  --remote-allow-origins="*" >> "$PROJECT_DIR/chrome.log" 2>&1 &
 
 sleep 5
 echo "✅ Chrome restarted with SingletonLock cleanup."

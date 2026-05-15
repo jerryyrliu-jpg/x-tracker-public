@@ -1,5 +1,6 @@
 import feedparser
 import os
+import re
 import requests
 import sqlite3
 import time
@@ -10,6 +11,7 @@ from urllib.parse import quote_plus
 from .company_ticker_mapper import CompanyTickerMapper
 
 logger = logging.getLogger("news_article_fetcher")
+_ISOLATION_TAGS = re.compile(r'</?(?:TWEET_DATA|NEWS_DATA)>', re.IGNORECASE)
 
 
 class NewsArticleFetcher:
@@ -18,7 +20,13 @@ class NewsArticleFetcher:
     def fetch_google_news(self, conn: sqlite3.Connection, company: str, days: int = 7) -> int:
         """Fetch supply chain news for company from Google News RSS. Returns count of new articles saved."""
         query = quote_plus(f'"{company}" supply chain OR supplier OR contract')
-        feed = feedparser.parse(self.GOOGLE_RSS.format(query=query))
+        try:
+            resp = requests.get(self.GOOGLE_RSS.format(query=query), timeout=10,
+                                headers={"User-Agent": "x-tracker/1.0"})
+            feed = feedparser.parse(resp.content)
+        except Exception as e:
+            logger.warning("Google News RSS fetch error for %s: %s", company, type(e).__name__)
+            return 0
         if feed.get("bozo"):
             logger.warning("Google News RSS bozo for %s: %s", company, feed.get("bozo_exception"))
             return 0
@@ -91,13 +99,15 @@ class NewsArticleFetcher:
         saved = 0
         for a in articles:
             try:
+                safe_title = _ISOLATION_TAGS.sub('', a["title"])
+                safe_summary = _ISOLATION_TAGS.sub('', a["summary"])
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO news_articles
                     (url, source, title, summary, published_at)
                     VALUES (?, ?, ?, ?, ?)
                 """,
-                    (a["url"], a["source"], a["title"], a["summary"], a.get("published_at")),
+                    (a["url"], a["source"], safe_title, safe_summary, a.get("published_at")),
                 )
                 if conn.execute("SELECT changes()").fetchone()[0]:
                     saved += 1

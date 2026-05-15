@@ -15,7 +15,7 @@ class EntityResolver:
             cfg = yaml.safe_load(f)
             self.seed_aliases = cfg.get('seed_aliases', {})
             self.root_tickers = cfg.get('root_tickers', [])
-        self._db_cache = None  # Cache for known aliases
+        self._db_cache = None  # Cache for known aliases; not thread-safe — use one instance per thread
 
     def _query_wikidata(self, name: str) -> dict:
         """Query Wikidata for company ticker and industry."""
@@ -42,7 +42,8 @@ class EntityResolver:
                 ticker = None
                 if "P249" in claims:
                     raw_ticker = claims["P249"][0]["mainsnak"]["datavalue"]["value"]
-                    if isinstance(raw_ticker, str) and 1 <= len(raw_ticker) <= 10:
+                    if (isinstance(raw_ticker, str) and 1 <= len(raw_ticker) <= 10
+                            and re.match(r'^[A-Z$][A-Z0-9.\-]{0,9}$', raw_ticker)):
                         ticker = raw_ticker
 
                 return {"ticker": ticker}

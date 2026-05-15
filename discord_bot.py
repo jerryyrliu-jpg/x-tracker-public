@@ -14,14 +14,16 @@ import yaml
 _accounts_yaml_lock = asyncio.Lock()
 
 TICKER_RE = re.compile(r'^[A-Z\$][A-Z0-9.\-]{0,9}$')
-DAYS_RE = re.compile(r'\bdays?:(\S+)\b', re.IGNORECASE)
+DAYS_RE = re.compile(r'\bdays?:(\d+)\b', re.IGNORECASE)
 
 _COOLDOWN_SECS = 60
 _CHAIN_COOLDOWN_SECS = 10
 _STATS_COOLDOWN_SECS = 5
+_PAUSE_COOLDOWN_SECS = 30
 _user_cooldowns: dict[int, float] = {}   # heavy ops (Gemini)
 _chain_cooldowns: dict[int, float] = {}  # /chain, /supply
 _stats_cooldowns: dict[int, float] = {}  # /stats
+_pause_cooldowns: dict[int, float] = {}  # /pausex, /resumex
 
 
 def _try_cooldown(user_id: int, cooldown_dict: dict = None, secs: int = None) -> float:
@@ -108,7 +110,7 @@ async def _run_daily_summary_for_account(account: str, display_name: str, webhoo
         try:
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
-            text = res.get("summary", "")
+            text = res.get("summary", "")[:20000]
             if text:
                 header = f"📅 **每日摘要 — @{account} ({display_name}) · {today}**\n"
                 for i in range(0, len(text), 1900):
@@ -121,7 +123,7 @@ async def _run_daily_summary_for_account(account: str, display_name: str, webhoo
             if os.path.exists(out_file):
                 os.unlink(out_file)
     else:
-        print(f"[auto-daily] {account} query_topic failed: {stderr.decode(errors='replace')}")
+        print(f"[auto-daily] {account} query_topic failed: {stderr.decode(errors='replace')[:500]}")
         await send_discord(webhook_url, f"⚠️ @{account} 每日摘要失敗，請查看伺服器日誌。")
 
 
@@ -755,7 +757,7 @@ async def account_toggle(interaction: discord.Interaction, action: str, name: st
         )
 
     except Exception as e:
-        import traceback; traceback.print_exc()
+        print(f"Error in /account: {type(e).__name__}")
         await interaction.followup.send("❌ 操作失敗，請查看伺服器日誌。", ephemeral=True)
 
 
@@ -822,7 +824,7 @@ async def summary(interaction: discord.Interaction, days: int = 7):
         try:
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
-            summary_text = res.get("summary", "")
+            summary_text = res.get("summary", "")[:20000]
             if summary_text:
                 for i in range(0, len(summary_text), 1900):
                     await interaction.followup.send(summary_text[i : i + 1900])
@@ -836,7 +838,7 @@ async def summary(interaction: discord.Interaction, days: int = 7):
                 os.unlink(out_file)
     else:
         if stderr:
-            print(f"Error in /summary: {stderr.decode(errors='replace')}")
+            print(f"Error in /summary: {stderr.decode(errors='replace')[:500]}")
         await interaction.followup.send(f"最近 {days} 天無推文資料。")
 
 
@@ -884,7 +886,7 @@ async def on_message(message):
                     try:
                         with open(out_file, encoding="utf-8") as f:
                             res = json.load(f)
-                        result_text = res.get("summary", "")
+                        result_text = res.get("summary", "")[:20000]
                         if result_text:
                             for i in range(0, len(result_text), 1900):
                                 await message.channel.send(result_text[i : i + 1900])
@@ -898,7 +900,7 @@ async def on_message(message):
                             os.unlink(out_file)
                 else:
                     if stderr:
-                        print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')}")
+                        print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')[:500]}")
                     await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 
@@ -946,7 +948,7 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         try:
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
-            result_text = res.get("summary", "")
+            result_text = res.get("summary", "")[:20000]
             if result_text:
                 for i in range(0, len(result_text), 1900):
                     await interaction.followup.send(result_text[i : i + 1900])
@@ -960,7 +962,7 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
                 os.unlink(out_file)
     else:
         if stderr:
-            print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')}")
+            print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')[:500]}")
         await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 
@@ -970,6 +972,10 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
 async def pausex(interaction: discord.Interaction):
     if not await bot.is_owner(interaction.user):
         await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
+        return
+    remaining = _try_cooldown(interaction.user.id, _pause_cooldowns, _PAUSE_COOLDOWN_SECS)
+    if remaining > 0:
+        await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
     await interaction.response.defer(thinking=True)
     # 1. 停止所有監控進程
@@ -993,6 +999,10 @@ async def pausex(interaction: discord.Interaction):
 async def resumex(interaction: discord.Interaction):
     if not await bot.is_owner(interaction.user):
         await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
+        return
+    remaining = _try_cooldown(interaction.user.id, _pause_cooldowns, _PAUSE_COOLDOWN_SECS)
+    if remaining > 0:
+        await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
     await interaction.response.defer(thinking=True)
     # 0. 先清理舊的監控進程，確保冪等性

@@ -66,10 +66,11 @@ async def call_gemini(tweets_batch: list[dict]) -> list[dict]:
     content = json.dumps(safe_batch, ensure_ascii=False)
     prompt = f"{prompts.SYSTEM_INSTRUCTION}\n\n{prompts.build_universal_extraction_prompt(content)}"
 
+    _gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
     try:
         # Use subprocess to call gemini CLI
         result = subprocess.run(
-            ['gemini'],
+            ['gemini', '--model', _gemini_model],
             input=prompt,
             capture_output=True,
             text=True,
