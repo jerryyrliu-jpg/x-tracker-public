@@ -40,11 +40,7 @@ class PIDLock:
                 os.kill(pid, 0)
                 mtime = self.lock_path.stat().st_mtime
                 if (time.time() - mtime) > (self.timeout_mins * 60):
-                    print(f"⚠️ Stale lock found (PID {pid}, >{self.timeout_mins}m). Killing stale process...")
-                    try:
-                        os.kill(pid, 9)
-                    except OSError:
-                        pass
+                    print(f"⚠️ Stale lock found (PID {pid}, >{self.timeout_mins}m). Removing stale lock.")
                     self.lock_path.unlink()
                 else:
                     return False
@@ -86,7 +82,9 @@ class Metrics:
         total_runs = self.data["success"] + self.data["fail"]
         self.data["total_runtime"] += runtime
         self.data["avg_runtime"] = self.data["total_runtime"] / total_runs
-        self.path.write_text(json.dumps(self.data))
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(json.dumps(self.data))
+        os.replace(tmp, self.path)
 
     def get_summary(self):
         return self.data

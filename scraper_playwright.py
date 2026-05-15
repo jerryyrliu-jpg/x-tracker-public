@@ -27,6 +27,9 @@ def _parse_account_arg() -> tuple[str, str]:
     _parser.add_argument("--account", default="aleabitoreddit")
     _args, _ = _parser.parse_known_args()
     account = _args.account
+    if not re.fullmatch(r'[A-Za-z0-9_]{1,15}', account):
+        print(f"Invalid account name: {account!r}", file=sys.stderr)
+        sys.exit(1)
     try:
         _cfg = _load_cfg(account, SCRAPER_BASE)
         webhook = _cfg.get("discord_webhook") or os.environ.get("DISCORD_WEBHOOK_SERENITY", "")

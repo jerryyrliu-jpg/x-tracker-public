@@ -14,10 +14,12 @@ find "$PROJECT_DIR/.profiles/x_scraper" -name "SingletonLock" -delete 2>/dev/nul
 # 使用 Headless-new 啟動 (Chrome 109+ 推薦)
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
   --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
   --user-data-dir="$PROJECT_DIR/.profiles/x_scraper" \
   --headless=old \
   --disable-gpu \
-  --remote-allow-origins="*" >> "$PROJECT_DIR/chrome.log" 2>&1 &
+  --remote-allow-origins=http://127.0.0.1:9222 \
+  >> "$PROJECT_DIR/chrome.log" 2>&1 &
 
 sleep 5
 echo "✅ Chrome restarted with SingletonLock cleanup."

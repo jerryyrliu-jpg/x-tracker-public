@@ -24,6 +24,7 @@ _user_cooldowns: dict[int, float] = {}   # heavy ops (Gemini)
 _chain_cooldowns: dict[int, float] = {}  # /chain, /supply
 _stats_cooldowns: dict[int, float] = {}  # /stats
 _pause_cooldowns: dict[int, float] = {}  # /pausex, /resumex
+_gemini_sem = asyncio.Semaphore(3)       # max 3 concurrent Gemini subprocesses
 
 
 def _try_cooldown(user_id: int, cooldown_dict: dict = None, secs: int = None) -> float:
@@ -93,19 +94,20 @@ async def _run_daily_summary_for_account(account: str, display_name: str, webhoo
         "--account", account,
         "--output", out_file,
     ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(SCRAPER_BASE),
-    )
-    try:
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        await send_discord(webhook_url, f"⚠️ @{account} 每日摘要逾時 (>7m)，已跳過。")
-        return
+    async with _gemini_sem:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(SCRAPER_BASE),
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            await send_discord(webhook_url, f"⚠️ @{account} 每日摘要逾時 (>7m)，已跳過。")
+            return
     if proc.returncode == 0 and os.path.exists(out_file):
         try:
             with open(out_file, encoding="utf-8") as f:
@@ -807,18 +809,19 @@ async def summary(interaction: discord.Interaction, days: int = 7):
         "--output", out_file,
     ]
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(SCRAPER_BASE),
-    )
-    try:
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-    except asyncio.TimeoutError:
-        proc.kill(); await proc.wait()
-        await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
-        return
+    async with _gemini_sem:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(SCRAPER_BASE),
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+        except asyncio.TimeoutError:
+            proc.kill(); await proc.wait()
+            await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
+            return
 
     if proc.returncode == 0 and os.path.exists(out_file):
         try:
@@ -869,18 +872,19 @@ async def on_message(message):
             ]
 
             async with message.channel.typing():
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=str(SCRAPER_BASE),
-                )
-                try:
-                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-                except asyncio.TimeoutError:
-                    proc.kill(); await proc.wait()
-                    await message.channel.send(f"⚠️ {ticker} 分析逾時 (>7m)，已中止。")
-                    return
+                async with _gemini_sem:
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=str(SCRAPER_BASE),
+                    )
+                    try:
+                        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+                    except asyncio.TimeoutError:
+                        proc.kill(); await proc.wait()
+                        await message.channel.send(f"⚠️ {ticker} 分析逾時 (>7m)，已中止。")
+                        return
 
                 if proc.returncode == 0 and os.path.exists(out_file):
                     try:
@@ -931,18 +935,19 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         "--output", out_file,
     ]
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(SCRAPER_BASE),
-    )
-    try:
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-    except asyncio.TimeoutError:
-        proc.kill(); await proc.wait()
-        await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
-        return
+    async with _gemini_sem:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(SCRAPER_BASE),
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+        except asyncio.TimeoutError:
+            proc.kill(); await proc.wait()
+            await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
+            return
 
     if proc.returncode == 0 and os.path.exists(out_file):
         try:
@@ -1038,5 +1043,6 @@ async def resumex(interaction: discord.Interaction):
     await interaction.followup.send("🚀 **X-Tracker 已恢復**。Chrome 已重啟並恢復監控輪詢。")
 
 
-bot.run(TOKEN)
+if __name__ == "__main__":
+    bot.run(TOKEN)
 

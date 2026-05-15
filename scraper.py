@@ -141,14 +141,26 @@ def save_since_id(account: str, tweet_id):
     }))
 
 
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
+
 async def download_image(url: str, path: Path):
     host = urlparse(url).hostname or ''
     if host not in _ALLOWED_IMAGE_HOSTS:
         raise ValueError(f"Image download blocked: untrusted host {host!r}")
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.get(url)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(r.content)
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+        async with client.stream("GET", url) as r:
+            r.raise_for_status()
+            cl = int(r.headers.get("content-length", "0"))
+            if cl > _MAX_IMAGE_BYTES:
+                raise ValueError(f"Image too large: {cl} bytes")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            total = 0
+            with path.open("wb") as fh:
+                async for chunk in r.aiter_bytes(65536):
+                    total += len(chunk)
+                    if total > _MAX_IMAGE_BYTES:
+                        raise ValueError("Image too large (streaming)")
+                    fh.write(chunk)
     return str(path)
 
 

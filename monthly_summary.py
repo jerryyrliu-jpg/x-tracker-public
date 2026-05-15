@@ -62,7 +62,7 @@ def generate_summary(account_cfg: dict, tweets_text: str):
             timeout=420,
         )
         if result.returncode != 0:
-            print(f"Gemini error: {result.stderr}")
+            print(f"Gemini error: {result.stderr[:500]}")
             return None
         return result.stdout
     except subprocess.TimeoutExpired:
@@ -98,11 +98,16 @@ async def main():
         print("Failed to generate summary.")
         return
 
+    summary = summary[:20000]
+    display = account_cfg.get("display_name", account_name)
+    header = f"📊 月度摘要 — @{account_name} ({display}) · {datetime.now().strftime('%Y-%m')}\n"
     if args.dry_run:
         print("=== DRY RUN ===")
         print(summary)
     else:
-        await send_discord(account_cfg["discord_webhook"], summary)
+        for i in range(0, max(len(summary), 1), 1900):
+            chunk = (header if i == 0 else "") + summary[i:i + 1900]
+            await send_discord(account_cfg["discord_webhook"], chunk)
         print("Summary sent to Discord.")
 
 if __name__ == "__main__":
