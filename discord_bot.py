@@ -637,6 +637,44 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
             ORDER BY e.name
         """, (ctx, ctx)).fetchall()
 
+        # Fall back to JSON cache when SQL DB is sparse (< 20 active relations for this context)
+        USE_CACHE = len(rows) + len(root_rows) < 20
+        cache_path = SCRAPER_BASE / "cpo_chain" / "output" / "usci_tiers_cache.json"
+        if USE_CACHE and cache_path.exists():
+            with open(cache_path, encoding="utf-8") as _f:
+                _cache = json.load(_f)
+            _inds = _cache.get("industries", {})
+            industry_data = _inds.get(ctx) or _inds.get(industry)
+            if industry_data:
+                TIER_LABELS = {0: "🏢 終端客戶", 1: "⚙️ 直接供應商", 2: "🔄 二階供應商", 3: "🪨 原材料"}
+                tiers_list = industry_data.get("tiers", [])
+                from collections import defaultdict as _dd
+                by_tier: dict = _dd(list)
+                for item in tiers_list:
+                    by_tier[item.get("tier", 99)].append(item)
+                lines = [f"## 📊 {ctx} Supply Chain — 上中下游全景\n"]
+                for t_num in sorted(by_tier):
+                    label = TIER_LABELS.get(t_num, f"Tier {t_num}")
+                    companies = by_tier[t_num]
+                    parts = []
+                    for c in companies[:15]:
+                        ticker = c.get("ticker") or ""
+                        name = discord.utils.escape_markdown(c.get("name", ""))
+                        tag = f"`${ticker}`" if ticker and TICKER_RE.match(ticker) else f"_{name}_"
+                        parts.append(tag)
+                    overflow = len(companies) - 15
+                    line = f"**{label}** ({len(companies)})\n" + "  ".join(parts)
+                    if overflow > 0:
+                        line += f" _(+{overflow} more)_"
+                    lines.append(line)
+                gen = _cache.get("metadata", {}).get("generated_at", "")[:10]
+                lines.append(f"\n_資料來源: USCI Cache ({gen}) · 使用 `/supply company:NVDA` 查詢詳細_")
+                msg = "\n\n".join(lines)
+                if len(msg) > 1950:
+                    msg = msg[:1947] + "…"
+                await interaction.followup.send(msg)
+                return
+
         if not rows and not root_rows:
             await interaction.followup.send(f"❌ 找不到 `{ctx}` 的供應鏈資料。")
             return
