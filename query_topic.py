@@ -3,7 +3,7 @@ faulthandler.enable()
 import sqlite3, json, sys, os, subprocess, argparse, re, logging
 from collections import defaultdict
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import yaml
 
@@ -32,7 +32,7 @@ _MAX_TWEETS_PER_ACCOUNT = 100
 
 def search_tweets_fts(conn, account: str, topic: str, days: int) -> list:
     """Search tweets using FTS5 virtual table. Falls back to LIKE on exception."""
-    since_date = (datetime.now() - timedelta(days=days)).isoformat()
+    since_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     try:
         query = (
             "SELECT t.id, t.created_at, t.text "
@@ -212,7 +212,7 @@ def _run_gemini(prompt: str, timeout: int = 300) -> str:
 
 def get_recent_tweets(conn, days: int, account: str = "aleabitoreddit") -> list:
     """Fetch all tweets within the last `days` days for `account`. No topic filter."""
-    since = (datetime.now() - timedelta(days=days)).isoformat()
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     return conn.execute(
         "SELECT id, created_at, text FROM tweets "
         "WHERE account = ? AND created_at >= ? ORDER BY created_at DESC",
@@ -443,7 +443,7 @@ def main():
             summary = summarize_recent(account=args.account, days=days, force=args.force)
             if not summary:
                 print(f"最近 {days} 天無推文資料或分析失敗。", file=sys.stderr)
-                return
+                sys.exit(1)
             result_data = {"summary": summary, "cached": False}
             if args.output:
                 with open(args.output, "w", encoding="utf-8") as f:
