@@ -159,8 +159,11 @@ def _run_gemini_cli(prompt: str, timeout: int = 300) -> str:
     except subprocess.TimeoutExpired:
         logger.warning("Gemini CLI call timed out.")
         return ""
+    except Exception as e:
+        logger.warning("Gemini CLI call error: %s", type(e).__name__)
+        return ""
     if res.returncode != 0 or not res.stdout.strip():
-        logger.warning("Gemini CLI call failed: %s", res.stderr)
+        logger.warning("Gemini CLI call failed: %s", res.stderr[:300])
         return ""
     return res.stdout
 
@@ -265,11 +268,15 @@ def summarize_recent(account: str = "aleabitoreddit", days: int = 7, force: bool
         if cached:
             return cached.get("summary", "")
 
-    conn = get_db_conn(DB_PATH)
     try:
-        tweets = get_recent_tweets(conn, days=days, account=account)
-    finally:
-        conn.close()
+        conn = get_db_conn(DB_PATH)
+        try:
+            tweets = get_recent_tweets(conn, days=days, account=account)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("summarize_recent: DB error: %s", type(e).__name__)
+        return ""
 
     if not tweets:
         return ""
@@ -280,7 +287,10 @@ def summarize_recent(account: str = "aleabitoreddit", days: int = 7, force: bool
         return ""
 
     summary = output.strip()
-    save_cache(cache_topic, {"summary": summary, "cached": False}, account=account, days=days)
+    try:
+        save_cache(cache_topic, {"summary": summary, "cached": False}, account=account, days=days)
+    except Exception as e:
+        logger.warning("summarize_recent: cache save error: %s", type(e).__name__)
     return summary
 
 
