@@ -1,15 +1,24 @@
 """Unit tests for llm_url.py — URL validation, HTML stripping, prompt building."""
 
+import asyncio
+import socket
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from llm_url import (
     _HtmlTextExtractor,
     _MAX_CONTENT_CHARS,
+    _MAX_FETCH_BYTES,
+    _SSRFSafeTransport,
     _build_generic_prompt,
     _build_tweet_prompt,
+    _fetch_generic,
     _sanitize_user_content,
     _strip_html,
     _validate_url,
@@ -59,6 +68,15 @@ class TestValidateUrl:
 
     def test_rejects_ipv6_loopback(self):
         assert _validate_url("http://[::1]/") is not None
+
+    def test_rejects_non_standard_port(self):
+        assert _validate_url("https://example.com:8080/path") is not None
+
+    def test_allows_explicit_80(self):
+        assert _validate_url("http://example.com:80/") is None
+
+    def test_allows_explicit_443(self):
+        assert _validate_url("https://example.com:443/") is None
 
 
 class TestSanitizeUserContent:
@@ -231,3 +249,187 @@ class TestBuildGenericPrompt:
         prompt = _build_generic_prompt("https://example.com", "text")
         assert "<PAGE_CONTENT>" in prompt
         assert "</PAGE_CONTENT>" in prompt
+
+
+# ---------------------------------------------------------------------------
+# _SSRFSafeTransport  (HIGH-1 / HIGH-4)
+# ---------------------------------------------------------------------------
+
+class TestSSRFSafeTransport:
+    _PRIVATE_IPS = [
+        "10.0.0.1",
+        "172.16.0.1",
+        "192.168.1.1",
+        "127.0.0.1",
+        "169.254.169.254",
+        "0.0.0.0",
+        "::1",
+    ]
+
+    def _fake_infos(self, ip: str):
+        family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, 0, "", (ip, 0))]
+
+    def _run(self, coro):
+        return asyncio.run(coro)
+
+    def test_blocks_private_10(self):
+        async def _go():
+            with patch("socket.getaddrinfo", return_value=self._fake_infos("10.0.0.1")):
+                t = _SSRFSafeTransport()
+                req = httpx.Request("GET", "https://internal.corp/")
+                with pytest.raises(ValueError, match="私有"):
+                    await t.handle_async_request(req)
+        self._run(_go())
+
+    def test_blocks_loopback_127(self):
+        async def _go():
+            with patch("socket.getaddrinfo", return_value=self._fake_infos("127.0.0.1")):
+                t = _SSRFSafeTransport()
+                req = httpx.Request("GET", "http://127.0.0.1/")
+                with pytest.raises(ValueError):
+                    await t.handle_async_request(req)
+        self._run(_go())
+
+    def test_blocks_link_local_metadata(self):
+        async def _go():
+            with patch("socket.getaddrinfo", return_value=self._fake_infos("169.254.169.254")):
+                t = _SSRFSafeTransport()
+                req = httpx.Request("GET", "http://metadata.internal/")
+                with pytest.raises(ValueError):
+                    await t.handle_async_request(req)
+        self._run(_go())
+
+    def test_blocks_ipv6_loopback(self):
+        async def _go():
+            with patch("socket.getaddrinfo", return_value=self._fake_infos("::1")):
+                t = _SSRFSafeTransport()
+                req = httpx.Request("GET", "http://[::1]/")
+                with pytest.raises(ValueError):
+                    await t.handle_async_request(req)
+        self._run(_go())
+
+    def test_dns_failure_raises(self):
+        async def _go():
+            with patch("socket.getaddrinfo", side_effect=socket.gaierror("nxdomain")):
+                t = _SSRFSafeTransport()
+                req = httpx.Request("GET", "https://nonexistent.invalid/")
+                with pytest.raises(ValueError, match="無法解析"):
+                    await t.handle_async_request(req)
+        self._run(_go())
+
+    def test_public_ip_delegates_to_parent(self):
+        async def _go():
+            mock_resp = httpx.Response(200, content=b"OK")
+            with patch("socket.getaddrinfo", return_value=self._fake_infos("93.184.216.34")):
+                with patch(
+                    "httpx.AsyncHTTPTransport.handle_async_request",
+                    new=AsyncMock(return_value=mock_resp),
+                ):
+                    t = _SSRFSafeTransport()
+                    req = httpx.Request("GET", "https://example.com/")
+                    resp = await t.handle_async_request(req)
+                    assert resp.status_code == 200
+        self._run(_go())
+
+    def test_pinned_request_preserves_host_header(self):
+        """Ensure the pinned request retains the original Host header for virtual hosting."""
+        async def _go():
+            mock_resp = httpx.Response(200, content=b"")
+            captured: list[httpx.Request] = []
+
+            async def _capture(self_transport, r):
+                captured.append(r)
+                return mock_resp
+
+            with patch("socket.getaddrinfo", return_value=self._fake_infos("93.184.216.34")):
+                with patch(
+                    "httpx.AsyncHTTPTransport.handle_async_request",
+                    new=_capture,
+                ):
+                    t = _SSRFSafeTransport()
+                    req = httpx.Request("GET", "https://example.com/page")
+                    await t.handle_async_request(req)
+
+            assert captured, "parent must have been called"
+            pinned_req = captured[0]
+            assert pinned_req.headers.get("host") == "example.com"
+            assert "93.184.216.34" in str(pinned_req.url)
+        self._run(_go())
+
+
+# ---------------------------------------------------------------------------
+# _fetch_generic  (HIGH-3 / HIGH-4 / MEDIUM-2)
+# ---------------------------------------------------------------------------
+
+class TestFetchGeneric:
+    def _make_mock_client(self, content: bytes, content_type: str = "text/html; charset=utf-8"):
+        async def _aiter_bytes():
+            yield content
+
+        resp = MagicMock()
+        resp.headers = MagicMock()
+        resp.headers.get = MagicMock(return_value=content_type)
+        resp.raise_for_status = MagicMock()
+        resp.charset_encoding = "utf-8"
+        resp.aiter_bytes = _aiter_bytes
+
+        stream_ctx = MagicMock()
+        stream_ctx.__aenter__ = AsyncMock(return_value=resp)
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        client = MagicMock()
+        client.stream = MagicMock(return_value=stream_ctx)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        return client
+
+    def test_byte_cap_at_300kb(self):
+        async def _go():
+            oversized = b"x" * (_MAX_FETCH_BYTES + 50_000)
+            mock_client = self._make_mock_client(oversized)
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                text = await _fetch_generic("https://example.com")
+            assert len(text) <= _MAX_FETCH_BYTES
+
+        asyncio.run(_go())
+
+    def test_rejects_json_content_type(self):
+        async def _go():
+            mock_client = self._make_mock_client(b"{}", "application/json")
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                with pytest.raises(ValueError, match="Content-Type"):
+                    await _fetch_generic("https://example.com")
+
+        asyncio.run(_go())
+
+    def test_rejects_pdf_content_type(self):
+        async def _go():
+            mock_client = self._make_mock_client(b"%PDF-1.4", "application/pdf")
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                with pytest.raises(ValueError, match="Content-Type"):
+                    await _fetch_generic("https://example.com")
+
+        asyncio.run(_go())
+
+    def test_accepts_xhtml_content_type(self):
+        async def _go():
+            html = b"<html><body>article</body></html>"
+            mock_client = self._make_mock_client(html, "application/xhtml+xml; charset=utf-8")
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                text = await _fetch_generic("https://example.com")
+            assert "article" in text
+
+        asyncio.run(_go())
+
+    def test_returns_stripped_text(self):
+        async def _go():
+            html = b"<p>Hello <b>world</b></p><script>evil()</script>"
+            mock_client = self._make_mock_client(html)
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                text = await _fetch_generic("https://example.com")
+            assert "Hello" in text
+            assert "world" in text
+            assert "evil" not in text
+
+        asyncio.run(_go())

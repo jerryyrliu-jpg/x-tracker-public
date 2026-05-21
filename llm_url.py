@@ -35,6 +35,13 @@ _MAX_REPLY_CHARS = 500
 _MAX_REPLIES = 10
 _SCROLL_DELTA_PX = 1200
 _SCROLL_WAIT_S = 0.8
+_MAX_FETCH_BYTES = 300_000
+_ALLOWED_PORTS = frozenset({None, 80, 443})
+_ALLOWED_CONTENT_TYPES = frozenset({
+    "text/html",
+    "text/plain",
+    "application/xhtml+xml",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -75,26 +82,53 @@ def _validate_url(url: str) -> str | None:
         return "無法解析 URL"
     if parsed.scheme not in ("http", "https"):
         return "只支援 http/https URL"
+    if parsed.port not in _ALLOWED_PORTS:
+        return "只允許連接到標準 HTTP/HTTPS 埠（80 / 443）"
     host = (parsed.hostname or "").lower()
     if not host:
         return "缺少主機名稱"
     return _check_host_ips(host)
 
 
-async def _ssrf_request_hook(request: httpx.Request) -> None:
-    """httpx async event hook — re-validates before every request, including redirects."""
-    host = request.url.host
-    loop = asyncio.get_running_loop()
-    try:
-        infos = await loop.run_in_executor(None, socket.getaddrinfo, host, None)
-    except socket.gaierror:
-        raise ValueError(f"無法解析重定向主機：{host}")
-    for info in infos:
-        addr = info[4][0]
-        ip = ipaddress.ip_address(addr)
-        if (ip.is_private or ip.is_loopback or ip.is_link_local or
-                ip.is_reserved or ip.is_multicast or ip.is_unspecified):
-            raise ValueError(f"重定向到不允許的位址：{addr}")
+class _SSRFSafeTransport(httpx.AsyncHTTPTransport):
+    """Resolve DNS once, validate all IPs, then pin connection to the validated address.
+
+    Eliminates the TOCTOU DNS-rebinding gap: httpcore never performs a second
+    DNS lookup because we rewrite the request URL to the already-validated IP,
+    while preserving the original Host header and TLS SNI hostname.
+    """
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        loop = asyncio.get_running_loop()
+        try:
+            infos = await loop.run_in_executor(None, socket.getaddrinfo, host, None)
+        except socket.gaierror:
+            raise ValueError(f"無法解析主機名稱：{host}")
+        if not infos:
+            raise ValueError(f"無法解析主機名稱：{host}")
+        for info in infos:
+            raw_addr = info[4][0]
+            try:
+                ip = ipaddress.ip_address(raw_addr)
+            except ValueError:
+                raise ValueError(f"無效的 IP 位址：{raw_addr}")
+            if (ip.is_private or ip.is_loopback or ip.is_link_local or
+                    ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+                raise ValueError(f"不允許存取私有 / 內部位址：{raw_addr}")
+        # Pin to first validated IP so httpcore never re-resolves DNS
+        validated_addr = infos[0][4][0]
+        pinned_url = request.url.copy_with(host=validated_addr)
+        new_headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
+        new_headers["host"] = host
+        new_extensions = {**request.extensions, "sni_hostname": host.encode("ascii")}
+        pinned = httpx.Request(
+            method=request.method,
+            url=pinned_url,
+            headers=new_headers,
+            extensions=new_extensions,
+        )
+        return await super().handle_async_request(pinned)
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +209,7 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
 
     async with async_playwright() as p:
         browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        context_created = not browser.contexts
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         page = await context.new_page()
         try:
@@ -256,6 +291,8 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
             logger.warning("Playwright tweet fetch error: %s", type(e).__name__)
         finally:
             await page.close()
+            if context_created:
+                await context.close()
 
     return result
 
@@ -266,28 +303,31 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
 
 async def _fetch_generic(url: str) -> str:
     """Fetch a non-X URL and return extracted visible text (streams up to 300 KB)."""
-    headers = {
+    req_headers = {
         "User-Agent": "Mozilla/5.0 (compatible; XTracker/1.0)",
         "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
         "Accept": "text/html,application/xhtml+xml,text/plain",
     }
-    chunks: list[str] = []
-    total = 0
+    byte_chunks: list[bytes] = []
+    total_bytes = 0
     async with httpx.AsyncClient(
         timeout=30, follow_redirects=True, max_redirects=5,
-        event_hooks={"request": [_ssrf_request_hook]},
+        transport=_SSRFSafeTransport(),
     ) as client:
-        async with client.stream("GET", url, headers=headers) as resp:
+        async with client.stream("GET", url, headers=req_headers) as resp:
             resp.raise_for_status()
             ct = resp.headers.get("content-type", "")
-            if "text" not in ct:
+            ct_base = ct.split(";")[0].strip().lower()
+            if ct_base not in _ALLOWED_CONTENT_TYPES:
                 raise ValueError(f"不支援的 Content-Type: {ct!r}")
-            async for chunk in resp.aiter_text():
-                chunks.append(chunk)
-                total += len(chunk)
-                if total >= 300_000:
+            async for chunk in resp.aiter_bytes():
+                byte_chunks.append(chunk)
+                total_bytes += len(chunk)
+                if total_bytes >= _MAX_FETCH_BYTES:
                     break
-    return _strip_html("".join(chunks)[:300_000])
+    raw = b"".join(byte_chunks)[:_MAX_FETCH_BYTES]
+    encoding = resp.charset_encoding or "utf-8"
+    return _strip_html(raw.decode(encoding, errors="replace"))
 
 
 # ---------------------------------------------------------------------------
