@@ -15,15 +15,18 @@ _accounts_yaml_lock = asyncio.Lock()
 
 TICKER_RE = re.compile(r'^[A-Z\$][A-Z0-9.\-]{0,9}$')
 DAYS_RE = re.compile(r'\bdays?:(\d+)\b', re.IGNORECASE)
+_URL_SCHEME_RE = re.compile(r'^https?://', re.IGNORECASE)
 
 _COOLDOWN_SECS = 60
 _CHAIN_COOLDOWN_SECS = 10
 _STATS_COOLDOWN_SECS = 5
 _PAUSE_COOLDOWN_SECS = 30
+_LLM_COOLDOWN_SECS = 30
 _user_cooldowns: dict[int, float] = {}   # heavy ops (Gemini)
 _chain_cooldowns: dict[int, float] = {}  # /chain, /supply
 _stats_cooldowns: dict[int, float] = {}  # /stats
 _pause_cooldowns: dict[int, float] = {}  # /pausex, /resumex
+_llm_cooldowns: dict[int, float] = {}   # /llm
 _gemini_sem = asyncio.Semaphore(3)       # max 3 concurrent Gemini subprocesses
 
 
@@ -1009,6 +1012,59 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 
+@tree.command(name="llm", description="摘要任意 URL 的內文，支援 X/Twitter 推文與一般網頁")
+@app_commands.describe(url="要摘要的網址（例如：https://x.com/user/status/123 或任意文章 URL）")
+async def llm_summarize(interaction: discord.Interaction, url: str):
+    remaining = _try_cooldown(interaction.user.id, _llm_cooldowns, _LLM_COOLDOWN_SECS)
+    if remaining > 0:
+        await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
+        return
+    url = url.strip()
+    if not _URL_SCHEME_RE.match(url):
+        await interaction.response.send_message(
+            "⚠️ 請提供完整網址（以 http:// 或 https:// 開頭）。", ephemeral=True
+        )
+        return
+    await interaction.response.defer(thinking=True)
+    _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_llm_")
+    os.close(_fd)
+    cmd = [sys.executable, str(SCRAPER_BASE / "llm_url.py"), "--url", url, "--output", out_file]
+    async with _gemini_sem:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(SCRAPER_BASE),
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            await interaction.followup.send("⚠️ 摘要逾時 (>3m)，已中止。")
+            return
+    try:
+        if proc.returncode == 0 and os.path.exists(out_file):
+            with open(out_file, encoding="utf-8") as f:
+                res = json.load(f)
+            summary = res.get("summary", "")[:8000]
+            if summary:
+                header = f"🔗 **摘要 — {url[:80]}{'…' if len(url) > 80 else ''}**\n"
+                for i in range(0, len(summary), 1900):
+                    await interaction.followup.send((header if i == 0 else "") + summary[i : i + 1900])
+            else:
+                err_msg = res.get("error", "摘要失敗")
+                await interaction.followup.send(f"⚠️ {err_msg}")
+        else:
+            if stderr:
+                print(f"[llm] error: {stderr.decode(errors='replace')[:300]}")
+            await interaction.followup.send("⚠️ 無法取得摘要，請確認網址是否可存取。")
+    except Exception as e:
+        print(f"[llm] read output error: {e}")
+        await interaction.followup.send("⚠️ 內部錯誤，請查看日誌。")
+    finally:
+        if os.path.exists(out_file):
+            os.unlink(out_file)
 
 
 @tree.command(name="pausex", description="暫停 X-Tracker 輪詢並釋放 Chrome 資源")
