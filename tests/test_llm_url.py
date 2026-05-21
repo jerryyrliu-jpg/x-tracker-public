@@ -83,8 +83,14 @@ class TestHtmlStripping:
 
 
 class TestBuildTweetPrompt:
-    def _make_data(self, text="買 TSLA", quoted=""):
-        return {"author": "trader99", "time": "2026-05-21T08:00:00Z", "text": text, "quoted_text": quoted}
+    def _make_data(self, text="買 TSLA", quoted="", replies=None):
+        return {
+            "author": "trader99",
+            "time": "2026-05-21T08:00:00Z",
+            "text": text,
+            "quoted_text": quoted,
+            "replies": replies or [],
+        }
 
     def test_contains_url(self):
         url = "https://x.com/trader99/status/123"
@@ -108,6 +114,26 @@ class TestBuildTweetPrompt:
         data = self._make_data(quoted="")
         prompt = _build_tweet_prompt("https://x.com/trader99/status/123", data)
         assert "引用推文" not in prompt
+
+    def test_includes_replies_when_present(self):
+        replies = [{"author": "user1", "text": "同意看多"}, {"author": "user2", "text": "我不同意"}]
+        data = self._make_data(replies=replies)
+        prompt = _build_tweet_prompt("https://x.com/trader99/status/123", data)
+        assert "回覆討論" in prompt
+        assert "@user1" in prompt
+        assert "同意看多" in prompt
+        assert "@user2" in prompt
+
+    def test_no_replies_section_when_empty(self):
+        data = self._make_data(replies=[])
+        prompt = _build_tweet_prompt("https://x.com/trader99/status/123", data)
+        assert "回覆討論" not in prompt
+
+    def test_replies_without_author(self):
+        replies = [{"author": "", "text": "匿名回覆內容"}]
+        data = self._make_data(replies=replies)
+        prompt = _build_tweet_prompt("https://x.com/trader99/status/123", data)
+        assert "匿名回覆內容" in prompt
 
     def test_uses_isolation_tags(self):
         prompt = _build_tweet_prompt("https://x.com/t/status/1", self._make_data())
