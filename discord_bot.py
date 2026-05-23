@@ -1044,7 +1044,7 @@ async def llm_summarize(interaction: discord.Interaction, url: str):
             await interaction.followup.send("⚠️ 摘要逾時 (>3m)，已中止。")
             return
     try:
-        if proc.returncode == 0 and os.path.exists(out_file):
+        if os.path.exists(out_file):
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
             summary = res.get("summary", "")[:8000]
@@ -1054,6 +1054,8 @@ async def llm_summarize(interaction: discord.Interaction, url: str):
                     await interaction.followup.send((header if i == 0 else "") + summary[i : i + 1900])
             else:
                 err_msg = res.get("error", "摘要失敗")
+                if stderr:
+                    print(f"[llm] error: {stderr.decode(errors='replace')[:300]}")
                 await interaction.followup.send(f"⚠️ {err_msg}")
         else:
             if stderr:
