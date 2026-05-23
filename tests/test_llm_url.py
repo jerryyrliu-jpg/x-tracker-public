@@ -16,9 +16,11 @@ from llm_url import (
     _MAX_CONTENT_CHARS,
     _MAX_FETCH_BYTES,
     _SSRFSafeTransport,
+    _X_URL_RE,
     _build_generic_prompt,
     _build_tweet_prompt,
     _fetch_generic,
+    _run_gemini,
     _sanitize_user_content,
     _strip_html,
     _validate_url,
@@ -373,6 +375,7 @@ class TestFetchGeneric:
         resp.raise_for_status = MagicMock()
         resp.charset_encoding = "utf-8"
         resp.aiter_bytes = _aiter_bytes
+        resp.aclose = AsyncMock()
 
         stream_ctx = MagicMock()
         stream_ctx.__aenter__ = AsyncMock(return_value=resp)
@@ -433,3 +436,121 @@ class TestFetchGeneric:
             assert "evil" not in text
 
         asyncio.run(_go())
+
+
+# ---------------------------------------------------------------------------
+# LOW-4: Additional tests — port rejection on redirect, /i/status/ regex,
+#         href$= selector format, _run_gemini CLI fallback suppression
+# ---------------------------------------------------------------------------
+
+class TestSSRFSafeTransportPortRejection:
+    """_SSRFSafeTransport must reject non-standard ports on every hop (redirect smuggling)."""
+
+    def _fake_public_infos(self):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))]
+
+    def test_rejects_port_8080(self):
+        async def _go():
+            t = _SSRFSafeTransport()
+            req = httpx.Request("GET", "http://example.com:8080/redirected")
+            with pytest.raises(ValueError, match="非標準埠"):
+                await t.handle_async_request(req)
+        asyncio.run(_go())
+
+    def test_rejects_port_22(self):
+        async def _go():
+            t = _SSRFSafeTransport()
+            req = httpx.Request("GET", "http://example.com:22/ssh")
+            with pytest.raises(ValueError, match="非標準埠"):
+                await t.handle_async_request(req)
+        asyncio.run(_go())
+
+    def test_allows_port_443(self):
+        async def _go():
+            mock_resp = httpx.Response(200, content=b"OK")
+            with patch("socket.getaddrinfo", return_value=self._fake_public_infos()):
+                with patch(
+                    "httpx.AsyncHTTPTransport.handle_async_request",
+                    new=AsyncMock(return_value=mock_resp),
+                ):
+                    t = _SSRFSafeTransport()
+                    req = httpx.Request("GET", "https://example.com:443/page")
+                    resp = await t.handle_async_request(req)
+                    assert resp.status_code == 200
+        asyncio.run(_go())
+
+
+class TestXUrlRegexIStatus:
+    """`_X_URL_RE` must match canonical /username/status/ but NOT /i/status/."""
+
+    def test_matches_canonical_url(self):
+        m = _X_URL_RE.match("https://x.com/elonmusk/status/1234567890")
+        assert m is not None
+        assert m.group(2) == "elonmusk"
+        assert m.group(3) == "1234567890"
+
+    def test_i_status_url_has_i_as_author(self):
+        # /i/status/ format — author group will be "i"
+        m = _X_URL_RE.match("https://x.com/i/status/9876543210")
+        assert m is not None
+        assert m.group(2).lower() == "i"
+
+    def test_redirect_detection_skips_i(self):
+        # Simulates the redirect-detection condition in _fetch_tweet:
+        # only update author if group(2) != "i"
+        final_url = "https://x.com/serenity/status/9876543210"
+        m = _X_URL_RE.match(final_url)
+        assert m is not None
+        assert m.group(2).lower() != "i"  # triggers author update
+
+    def test_non_x_url_does_not_match(self):
+        assert _X_URL_RE.match("https://reuters.com/article/abc") is None
+
+
+class TestRunGeminiNoCliFallback:
+    """When GEMINI_API_KEY is set and the SDK call fails, _run_gemini must NOT invoke CLI."""
+
+    def test_sdk_error_returns_empty_no_cli(self):
+        """SDK exception → return "" without spawning subprocess."""
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "fake-key"}):
+            with patch("google.generativeai.configure"):
+                with patch(
+                    "google.generativeai.GenerativeModel",
+                    side_effect=Exception("network error"),
+                ):
+                    with patch("subprocess.run") as mock_subproc:
+                        result = _run_gemini("test prompt")
+        assert result == ""
+        mock_subproc.assert_not_called()
+
+    def test_no_api_key_uses_cli(self):
+        """Without GEMINI_API_KEY the CLI path must be attempted."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "CLI summary"
+        mock_result.stderr = ""
+        with patch.dict("os.environ", {}, clear=True):
+            # Ensure no residual GEMINI_API_KEY in env
+            import os as _os
+            _os.environ.pop("GEMINI_API_KEY", None)
+            with patch("subprocess.run", return_value=mock_result) as mock_subproc:
+                result = _run_gemini("test prompt")
+        assert result == "CLI summary"
+        mock_subproc.assert_called_once()
+
+    def test_safety_block_returns_empty_no_cli(self):
+        """SDK safety block (ValueError on response.text) → return "" without CLI."""
+        mock_candidate = MagicMock()
+        mock_response = MagicMock()
+        mock_response.candidates = [mock_candidate]
+        type(mock_response).text = property(lambda self: (_ for _ in ()).throw(ValueError("safety")))
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "fake-key"}):
+            with patch("google.generativeai.configure"):
+                mock_model = MagicMock()
+                mock_model.generate_content.return_value = mock_response
+                with patch("google.generativeai.GenerativeModel", return_value=mock_model):
+                    with patch("subprocess.run") as mock_subproc:
+                        result = _run_gemini("test prompt")
+        assert result == ""
+        mock_subproc.assert_not_called()

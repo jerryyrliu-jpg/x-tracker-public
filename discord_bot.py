@@ -1025,6 +1025,9 @@ async def llm_summarize(interaction: discord.Interaction, url: str):
             "⚠️ 請提供完整網址（以 http:// 或 https:// 開頭）。", ephemeral=True
         )
         return
+    if len(url) > 2048:
+        await interaction.response.send_message("⚠️ URL 過長（超過 2048 字元）。", ephemeral=True)
+        return
     await interaction.response.defer(thinking=True)
     _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_llm_")
     os.close(_fd)
@@ -1055,14 +1058,14 @@ async def llm_summarize(interaction: discord.Interaction, url: str):
             else:
                 err_msg = res.get("error", "摘要失敗")
                 if stderr:
-                    print(f"[llm] error: {stderr.decode(errors='replace')[:300]}")
+                    logging.warning("[llm] %s", stderr.decode(errors="replace")[:300])
                 await interaction.followup.send(f"⚠️ {err_msg}")
         else:
             if stderr:
-                print(f"[llm] error: {stderr.decode(errors='replace')[:300]}")
+                logging.warning("[llm] %s", stderr.decode(errors="replace")[:300])
             await interaction.followup.send("⚠️ 無法取得摘要，請確認網址是否可存取。")
     except Exception as e:
-        print(f"[llm] read output error: {e}")
+        logging.warning("[llm] read output error: %s", e)
         await interaction.followup.send("⚠️ 內部錯誤，請查看日誌。")
     finally:
         if os.path.exists(out_file):
@@ -1081,7 +1084,7 @@ async def pausex(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     # 1. 停止所有監控進程
     for script in ("monitor_active.py", "monitor_rss.py"):
-        p = await asyncio.create_subprocess_exec("pkill", "-f", script)
+        p = await asyncio.create_subprocess_exec("pkill", "-f", str(SCRAPER_BASE / script))
         try:
             await asyncio.wait_for(p.wait(), timeout=5)
         except asyncio.TimeoutError:

@@ -42,6 +42,9 @@ _ALLOWED_CONTENT_TYPES = frozenset({
     "text/plain",
     "application/xhtml+xml",
 })
+_PAGE_LOAD_TIMEOUT_MS = 60_000
+_TWEET_SELECTOR_TIMEOUT_MS = 20_000
+_REPLY_WAIT_TIMEOUT_MS = 5_000
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +102,9 @@ class _SSRFSafeTransport(httpx.AsyncHTTPTransport):
     """
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        # Validate port on every hop (catches redirect-based port smuggling)
+        if request.url.port not in _ALLOWED_PORTS:
+            raise ValueError(f"不允許連接到非標準埠：{request.url.port}")
         host = request.url.host
         loop = asyncio.get_running_loop()
         try:
@@ -116,9 +122,15 @@ class _SSRFSafeTransport(httpx.AsyncHTTPTransport):
             if (ip.is_private or ip.is_loopback or ip.is_link_local or
                     ip.is_reserved or ip.is_multicast or ip.is_unspecified):
                 raise ValueError(f"不允許存取私有 / 內部位址：{raw_addr}")
-        # Pin to first validated IP so httpcore never re-resolves DNS
+        # Prefer IPv4 to avoid family-mismatch failures; fall back to first result
         validated_addr = infos[0][4][0]
-        pinned_url = request.url.copy_with(host=validated_addr)
+        for info in infos:
+            if info[0] == socket.AF_INET:
+                validated_addr = info[4][0]
+                break
+        # IPv6 addresses must be bracketed in URLs
+        ip_for_url = f"[{validated_addr}]" if ":" in validated_addr else validated_addr
+        pinned_url = request.url.copy_with(host=ip_for_url)
         new_headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
         new_headers["host"] = host
         new_extensions = {**request.extensions, "sni_hostname": host.encode("ascii")}
@@ -214,7 +226,7 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
         page = await context.new_page()
         try:
             await page.route("**/*", _intercept_non_text)
-            await page.goto(url, wait_until="load", timeout=60000)
+            await page.goto(url, wait_until="load", timeout=_PAGE_LOAD_TIMEOUT_MS)
 
             # /i/status/ format: X redirects to the canonical /username/status/ URL after load
             final_url = page.url
@@ -225,7 +237,9 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
                 result["author"] = author
 
             try:
-                await page.wait_for_selector("article[data-testid='tweet']", timeout=20000)
+                await page.wait_for_selector(
+                    "article[data-testid='tweet']", timeout=_TWEET_SELECTOR_TIMEOUT_MS
+                )
             except Exception:
                 return result
 
@@ -234,7 +248,7 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
             all_articles = await page.query_selector_all("article[data-testid='tweet']")
             article = None
             for art in all_articles:
-                link = await art.query_selector(f"a[href*='/status/{tweet_id}']")
+                link = await art.query_selector(f"a[href$='/status/{tweet_id}']")
                 if link:
                     article = art
                     break
@@ -260,7 +274,7 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
             try:
                 await page.wait_for_function(
                     "() => document.querySelectorAll(\"article[data-testid='tweet']\").length > 1",
-                    timeout=5000,
+                    timeout=_REPLY_WAIT_TIMEOUT_MS,
                 )
             except Exception:
                 pass
@@ -274,7 +288,7 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
                     break
                 try:
                     # Skip the main tweet itself (may still be in DOM after scroll)
-                    main_link = await reply_art.query_selector(f"a[href*='/status/{tweet_id}']")
+                    main_link = await reply_art.query_selector(f"a[href$='/status/{tweet_id}']")
                     if main_link:
                         continue
                     r_txt_el = await reply_art.query_selector("[data-testid='tweetText']")
@@ -302,9 +316,15 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
         except Exception as e:
             logger.warning("Playwright tweet fetch error: %s", type(e).__name__)
         finally:
-            await page.close()
+            try:
+                await page.close()
+            except Exception:
+                pass
             if context_created:
-                await context.close()
+                try:
+                    await context.close()
+                except Exception:
+                    pass
 
     return result
 
@@ -322,6 +342,7 @@ async def _fetch_generic(url: str) -> str:
     }
     byte_chunks: list[bytes] = []
     total_bytes = 0
+    encoding = "utf-8"
     async with httpx.AsyncClient(
         timeout=30, follow_redirects=True, max_redirects=5,
         transport=_SSRFSafeTransport(),
@@ -332,13 +353,14 @@ async def _fetch_generic(url: str) -> str:
             ct_base = ct.split(";")[0].strip().lower()
             if ct_base not in _ALLOWED_CONTENT_TYPES:
                 raise ValueError(f"不支援的 Content-Type: {ct!r}")
+            encoding = resp.charset_encoding or "utf-8"
             async for chunk in resp.aiter_bytes():
                 byte_chunks.append(chunk)
                 total_bytes += len(chunk)
                 if total_bytes >= _MAX_FETCH_BYTES:
+                    await resp.aclose()
                     break
     raw = b"".join(byte_chunks)[:_MAX_FETCH_BYTES]
-    encoding = resp.charset_encoding or "utf-8"
     return _strip_html(raw.decode(encoding, errors="replace"))
 
 
@@ -347,7 +369,7 @@ async def _fetch_generic(url: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _run_gemini(prompt: str) -> str:
-    """Call Gemini SDK with CLI fallback (mirrors query_topic._run_gemini)."""
+    """Call Gemini SDK when API key is set; otherwise fall back to CLI."""
     api_key = os.getenv("GEMINI_API_KEY")
     if api_key:
         try:
@@ -359,11 +381,11 @@ def _run_gemini(prompt: str) -> str:
                 try:
                     return response.text or ""
                 except ValueError as e:
-                    # Safety filter blocked — don't retry via CLI
                     logger.warning("Gemini SDK safety block: %s", e)
                     return ""
         except Exception as e:
-            logger.warning("Gemini SDK error (%s), falling back to CLI", type(e).__name__)
+            logger.warning("Gemini SDK error (%s)", type(e).__name__)
+            return ""  # Same API key → CLI would fail identically
 
     cmd = ["gemini", "--model", _GEMINI_MODEL]
     try:
