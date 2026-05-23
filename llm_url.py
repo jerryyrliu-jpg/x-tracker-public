@@ -229,31 +229,17 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
             except Exception:
                 return result
 
-            # Scroll to trigger reply loading; wait for at least 2 articles in DOM
-            await page.mouse.wheel(0, _SCROLL_DELTA_PX)
-            try:
-                await page.wait_for_function(
-                    "() => document.querySelectorAll(\"article[data-testid='tweet']\").length > 1",
-                    timeout=5000,
-                )
-            except Exception:
-                pass  # no replies loaded — continue anyway
-            await page.mouse.wheel(0, _SCROLL_DELTA_PX)
-            await asyncio.sleep(_SCROLL_WAIT_S)
-
+            # Extract main tweet data BEFORE scrolling —
+            # X virtualizes the DOM on scroll and removes top articles from the DOM.
             all_articles = await page.query_selector_all("article[data-testid='tweet']")
-
-            # Locate the specific tweet by its status ID in its permalink <a>
-            main_idx = -1
             article = None
-            for i, art in enumerate(all_articles):
+            for art in all_articles:
                 link = await art.query_selector(f"a[href*='/status/{tweet_id}']")
                 if link:
-                    main_idx = i
                     article = art
                     break
 
-            if main_idx == -1:
+            if article is None:
                 logger.warning("Could not locate tweet %s in page DOM", tweet_id)
                 return result
 
@@ -269,10 +255,28 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
             if quoted_el:
                 result["quoted_text"] = await quoted_el.inner_text()
 
-            # Extract replies: articles after main tweet, capped at _MAX_REPLIES
+            # Scroll to load replies AFTER main tweet data is saved
+            await page.mouse.wheel(0, _SCROLL_DELTA_PX)
+            try:
+                await page.wait_for_function(
+                    "() => document.querySelectorAll(\"article[data-testid='tweet']\").length > 1",
+                    timeout=5000,
+                )
+            except Exception:
+                pass
+            await page.mouse.wheel(0, _SCROLL_DELTA_PX)
+            await asyncio.sleep(_SCROLL_WAIT_S)
+
+            # Replies: articles visible after scrolling that are NOT the main tweet
             replies = []
-            for reply_art in all_articles[main_idx + 1: main_idx + 1 + _MAX_REPLIES]:
+            for reply_art in await page.query_selector_all("article[data-testid='tweet']"):
+                if len(replies) >= _MAX_REPLIES:
+                    break
                 try:
+                    # Skip the main tweet itself (may still be in DOM after scroll)
+                    main_link = await reply_art.query_selector(f"a[href*='/status/{tweet_id}']")
+                    if main_link:
+                        continue
                     r_txt_el = await reply_art.query_selector("[data-testid='tweetText']")
                     r_text = await r_txt_el.inner_text() if r_txt_el else ""
                     if not r_text.strip():
