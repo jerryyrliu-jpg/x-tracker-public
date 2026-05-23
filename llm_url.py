@@ -216,6 +216,14 @@ async def _fetch_tweet(url: str, tweet_id: str, author: str) -> dict:
             await page.route("**/*", _intercept_non_text)
             await page.goto(url, wait_until="load", timeout=60000)
 
+            # /i/status/ format: X redirects to the canonical /username/status/ URL after load
+            final_url = page.url
+            m_final = _X_URL_RE.match(final_url)
+            if m_final and m_final.group(2).lower() != "i":
+                author = m_final.group(2)
+                tweet_id = m_final.group(3)
+                result["author"] = author
+
             try:
                 await page.wait_for_selector("article[data-testid='tweet']", timeout=20000)
             except Exception:
