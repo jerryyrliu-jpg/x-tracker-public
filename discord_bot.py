@@ -377,7 +377,7 @@ async def on_ready():
 
 
     print(f"[bot] Bot is ready!")
-    await bot.change_presence(activity=discord.Game(name="V3.7_LOCAL_ACTIVE"))
+    await bot.change_presence(activity=discord.Game(name="v4.7.0"))
     if not scheduled_summary.is_running():
         scheduled_summary.start()
     if not scheduled_confidence_boost.is_running():

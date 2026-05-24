@@ -1,4 +1,4 @@
-# X-Tracker v4.6 (Serenity)
+# X-Tracker v4.7.0
 
 基於 Playwright CDP 的多帳號推特追蹤與 AI 投資分析系統。透過 Gemini 深度分析推文情感趨勢，整合 CPO 供應鏈知識圖譜，透過 Discord Bot 與 Streamlit Dashboard 呈現。
 
@@ -124,8 +124,11 @@ streamlit run dashboard.py --server.address 127.0.0.1
 
 ## 📜 版本記錄
 
+> 完整 change list 見 [CHANGELOG.md](./CHANGELOG.md)
+
 | 版本 | 日期 | 主要變更 |
 |------|------|---------|
+| v4.7.0 | 2026-05-24 | Security Round 1–4（Opus 4.7）：SSRF DNS pinning、Prompt injection URL sanitization、Temp file leak fix × 4 commands、DOM virtualization fix、/i/status/ redirect、70 unit tests |
 | v4.6.4 | 2026-05-04 | Security R3：extract_universal timeout、monthly_summary TWEET_DATA 隔離+timeout+GEMINI_MODEL、export_universal SQL parameterized、/chain escape_markdown、/account error redact、dashboard subprocess text=True、get_running_loop、HTML 原子寫入、EDGAR_USER_AGENT env var |
 | v4.6.3 | 2026-05-04 | Security R2：$summary_test owner-only+cooldown+timeout、9 處 proc.communicate 加 wait_for、atomic _try_cooldown、EntityResolver commit、INSERT OR IGNORE、cache TTL 解耦、argparse 移入函式、bare except 修正 |
 | v4.6.2 | 2026-05-04 | Security R1：httpx log 過濾、/pausex /resumex owner guard、Gemini prompt TWEET_DATA 隔離、EXTRACTION_PROMPT brace escape、60s rate limiting、SQL parameterized、</script> XSS 修正 |
