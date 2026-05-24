@@ -199,8 +199,9 @@ async def _run_cpo_update() -> None:
 async def _run_monthly_summary(webhook_url: str) -> None:
     """Call monthly_summary.py for every account in accounts.yaml."""
     try:
-        with open(SCRAPER_BASE / "accounts.yaml") as f:
-            accounts = list(yaml.safe_load(f).get("accounts", {}).keys())
+        async with _accounts_yaml_lock:
+            with open(SCRAPER_BASE / "accounts.yaml") as f:
+                accounts = list(yaml.safe_load(f).get("accounts", {}).keys())
     except Exception as e:
         print(f"[auto-monthly] failed to load accounts.yaml: {e}")
         await send_discord(webhook_url, "⚠️ 月度摘要失敗：無法讀取 accounts.yaml，請查看伺服器日誌。")
@@ -331,8 +332,9 @@ async def scheduled_summary():
     print(f"[scheduler] running at {now_taipei.strftime('%Y-%m-%d %H:%M')} Taipei")
 
     try:
-        with open(SCRAPER_BASE / "accounts.yaml") as f:
-            accounts_cfg = yaml.safe_load(f).get("accounts", {})
+        async with _accounts_yaml_lock:
+            with open(SCRAPER_BASE / "accounts.yaml") as f:
+                accounts_cfg = yaml.safe_load(f).get("accounts", {})
     except Exception as e:
         print(f"[scheduler] failed to load accounts.yaml: {e}")
         return
@@ -407,21 +409,20 @@ async def summary_prefix(ctx, days: int = 1):
         "--output", out_file,
     ]
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(SCRAPER_BASE),
-    )
     try:
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-    except asyncio.TimeoutError:
-        proc.kill(); await proc.wait()
-        await ctx.send("⚠️ 分析逾時 (>7m)，已中止。")
-        return
-
-    if proc.returncode == 0 and os.path.exists(out_file):
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(SCRAPER_BASE),
+        )
         try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+        except asyncio.TimeoutError:
+            proc.kill(); await proc.wait()
+            await ctx.send("⚠️ 分析逾時 (>7m)，已中止。")
+            return
+        if proc.returncode == 0 and os.path.exists(out_file):
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
             text = res.get("summary", "")
@@ -430,15 +431,15 @@ async def summary_prefix(ctx, days: int = 1):
                     await ctx.send(text[i : i + 1900])
             else:
                 await ctx.send("分析失敗，今日無資料。")
-        except Exception as e:
-            print(f"Error reading summary_test output: {e}")
-            await ctx.send("讀取分析結果失敗。")
-        finally:
-            if os.path.exists(out_file):
-                os.unlink(out_file)
-    else:
-        print(f"[summary_test] failed: {stderr.decode(errors='replace')[:200]}")
-        await ctx.send("分析執行失敗，請查看伺服器日誌。")
+        else:
+            print(f"[summary_test] failed: {stderr.decode(errors='replace')[:200]}")
+            await ctx.send("分析執行失敗，請查看伺服器日誌。")
+    except Exception as e:
+        print(f"Error reading summary_test output: {e}")
+        await ctx.send("讀取分析結果失敗。")
+    finally:
+        if os.path.exists(out_file):
+            os.unlink(out_file)
 
 @bot.command(name="sync")
 @commands.is_owner()
@@ -499,8 +500,9 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
         
         metadata = full_data.get("metadata", {})
         gen_at_str = metadata.get("generated_at", "")
-        gen_at = datetime.fromisoformat(gen_at_str) if gen_at_str else datetime.now()
-        is_stale = (datetime.now() - gen_at).days >= 8
+        gen_at = datetime.fromisoformat(gen_at_str) if gen_at_str else datetime.now(timezone.utc)
+        now_for_stale = datetime.now(gen_at.tzinfo) if gen_at.tzinfo else datetime.now()
+        is_stale = (now_for_stale - gen_at).days >= 8
         
         # Filter by industry context
         industry_data = full_data.get("industries", {}).get(industry.upper())
@@ -850,22 +852,21 @@ async def summary(interaction: discord.Interaction, days: int = 7):
         "--output", out_file,
     ]
 
-    async with _gemini_sem:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(SCRAPER_BASE),
-        )
-        try:
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-        except asyncio.TimeoutError:
-            proc.kill(); await proc.wait()
-            await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
-            return
-
-    if proc.returncode == 0 and os.path.exists(out_file):
-        try:
+    try:
+        async with _gemini_sem:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(SCRAPER_BASE),
+            )
+            try:
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+            except asyncio.TimeoutError:
+                proc.kill(); await proc.wait()
+                await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
+                return
+        if proc.returncode == 0 and os.path.exists(out_file):
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
             summary_text = res.get("summary", "")[:20000]
@@ -874,16 +875,16 @@ async def summary(interaction: discord.Interaction, days: int = 7):
                     await interaction.followup.send(summary_text[i : i + 1900])
             else:
                 await interaction.followup.send("分析失敗，請稍後再試。")
-        except Exception as e:
-            print(f"Error reading /summary output: {e}")
-            await interaction.followup.send("分析失敗，請稍後再試。")
-        finally:
-            if os.path.exists(out_file):
-                os.unlink(out_file)
-    else:
-        if stderr:
-            print(f"Error in /summary: {stderr.decode(errors='replace')[:500]}")
-        await interaction.followup.send(f"最近 {days} 天無推文資料。")
+        else:
+            if stderr:
+                print(f"Error in /summary: {stderr.decode(errors='replace')[:500]}")
+            await interaction.followup.send(f"最近 {days} 天無推文資料。")
+    except Exception as e:
+        print(f"Error reading /summary output: {e}")
+        await interaction.followup.send("分析失敗，請稍後再試。")
+    finally:
+        if os.path.exists(out_file):
+            os.unlink(out_file)
 
 
 @bot.event
@@ -976,22 +977,21 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         "--output", out_file,
     ]
 
-    async with _gemini_sem:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(SCRAPER_BASE),
-        )
-        try:
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-        except asyncio.TimeoutError:
-            proc.kill(); await proc.wait()
-            await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
-            return
-
-    if proc.returncode == 0 and os.path.exists(out_file):
-        try:
+    try:
+        async with _gemini_sem:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(SCRAPER_BASE),
+            )
+            try:
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+            except asyncio.TimeoutError:
+                proc.kill(); await proc.wait()
+                await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
+                return
+        if proc.returncode == 0 and os.path.exists(out_file):
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
             result_text = res.get("summary", "")[:20000]
@@ -1000,16 +1000,16 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
                     await interaction.followup.send(result_text[i : i + 1900])
             else:
                 await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
-        except Exception as e:
-            print(f"Error reading /analyze output: {e}")
+        else:
+            if stderr:
+                print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')[:500]}")
             await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
-        finally:
-            if os.path.exists(out_file):
-                os.unlink(out_file)
-    else:
-        if stderr:
-            print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')[:500]}")
+    except Exception as e:
+        print(f"Error reading /analyze output: {e}")
         await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
+    finally:
+        if os.path.exists(out_file):
+            os.unlink(out_file)
 
 
 @tree.command(name="llm", description="摘要任意 URL 的內文，支援 X/Twitter 推文與一般網頁")
@@ -1031,28 +1031,29 @@ async def llm_summarize(interaction: discord.Interaction, url: str):
     await interaction.response.defer(thinking=True)
     _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_llm_")
     os.close(_fd)
-    cmd = [sys.executable, str(SCRAPER_BASE / "llm_url.py"), "--url", url, "--output", out_file]
-    async with _gemini_sem:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(SCRAPER_BASE),
-        )
-        try:
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            await interaction.followup.send("⚠️ 摘要逾時 (>3m)，已中止。")
-            return
     try:
+        cmd = [sys.executable, str(SCRAPER_BASE / "llm_url.py"), "--url", url, "--output", out_file]
+        async with _gemini_sem:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(SCRAPER_BASE),
+            )
+            try:
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                await interaction.followup.send("⚠️ 摘要逾時 (>3m)，已中止。")
+                return
         if os.path.exists(out_file):
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
             summary = res.get("summary", "")[:8000]
             if summary:
-                header = f"🔗 **摘要 — {url[:80]}{'…' if len(url) > 80 else ''}**\n"
+                safe_display_url = discord.utils.escape_markdown(url[:80])
+                header = f"🔗 **摘要 — {safe_display_url}{'…' if len(url) > 80 else ''}**\n"
                 for i in range(0, len(summary), 1900):
                     await interaction.followup.send((header if i == 0 else "") + summary[i : i + 1900])
             else:
@@ -1111,7 +1112,7 @@ async def resumex(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     # 0. 先清理舊的監控進程，確保冪等性
     for script in ("monitor_active.py", "monitor_rss.py"):
-        p = await asyncio.create_subprocess_exec("pkill", "-f", script)
+        p = await asyncio.create_subprocess_exec("pkill", "-f", str(SCRAPER_BASE / script))
         try:
             await asyncio.wait_for(p.wait(), timeout=5)
         except asyncio.TimeoutError:
