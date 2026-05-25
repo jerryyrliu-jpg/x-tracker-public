@@ -128,7 +128,7 @@ async def run_scraper(account: str = "aleabitoreddit"):
     return False, None
 
 async def main():
-    logger.info("🚀 Starting X-Tracker v3.4 Active Monitor...")
+    logger.info("🚀 Starting X-Tracker v4.7.0 Active Monitor...")
     
     if not lock.acquire():
         logger.error("❌ Process already running (Lock active). Exiting.")

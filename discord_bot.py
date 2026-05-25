@@ -90,29 +90,29 @@ async def _run_daily_summary_for_account(account: str, display_name: str, webhoo
     today = datetime.now(TAIPEI).strftime("%Y-%m-%d")
     _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_daily_")
     os.close(_fd)
-    cmd = [
-        sys.executable,
-        str(SCRAPER_BASE / "query_topic.py"),
-        "--summary", "--days", "1",
-        "--account", account,
-        "--output", out_file,
-    ]
-    async with _gemini_sem:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(SCRAPER_BASE),
-        )
-        try:
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            await send_discord(webhook_url, f"⚠️ @{account} 每日摘要逾時 (>7m)，已跳過。")
-            return
-    if proc.returncode == 0 and os.path.exists(out_file):
-        try:
+    try:
+        cmd = [
+            sys.executable,
+            str(SCRAPER_BASE / "query_topic.py"),
+            "--summary", "--days", "1",
+            "--account", account,
+            "--output", out_file,
+        ]
+        async with _gemini_sem:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(SCRAPER_BASE),
+            )
+            try:
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                await send_discord(webhook_url, f"⚠️ @{account} 每日摘要逾時 (>7m)，已跳過。")
+                return
+        if proc.returncode == 0 and os.path.exists(out_file):
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
             text = res.get("summary", "")[:20000]
@@ -122,14 +122,14 @@ async def _run_daily_summary_for_account(account: str, display_name: str, webhoo
                     await send_discord(webhook_url, (header if i == 0 else "") + text[i:i + 1900])
             else:
                 await send_discord(webhook_url, f"⚠️ @{account} 每日摘要：今日無推文資料。")
-        except Exception as e:
-            print(f"[auto-daily] {account} error reading output: {e}")
-        finally:
-            if os.path.exists(out_file):
-                os.unlink(out_file)
-    else:
-        print(f"[auto-daily] {account} query_topic failed: {stderr.decode(errors='replace')[:500]}")
-        await send_discord(webhook_url, f"⚠️ @{account} 每日摘要失敗，請查看伺服器日誌。")
+        else:
+            logging.warning("[auto-daily] %s query_topic failed: %s", account, stderr.decode(errors='replace')[:500])
+            await send_discord(webhook_url, f"⚠️ @{account} 每日摘要失敗，請查看伺服器日誌。")
+    except Exception as e:
+        logging.warning("[auto-daily] %s error: %s", account, e)
+    finally:
+        if os.path.exists(out_file):
+            os.unlink(out_file)
 
 
 async def _run_daily_summary(accounts_cfg: dict, default_webhook: str) -> None:
@@ -160,10 +160,10 @@ async def _run_cpo_update() -> None:
         st1, er1 = await asyncio.wait_for(proc1.communicate(), timeout=600)
     except asyncio.TimeoutError:
         proc1.kill(); await proc1.wait()
-        print("[usci-update] extract timed out (>600s)")
+        logging.warning("[usci-update] extract timed out (>600s)")
         return
     if proc1.returncode != 0:
-        print(f"[usci-update] {extract_script} failed: {er1.decode(errors='replace')}")
+        logging.warning("[usci-update] %s failed: %s", extract_script, er1.decode(errors='replace')[:500])
         # Fallback to keyword search if vector fails — must await to avoid race with export
         fallback = await asyncio.create_subprocess_exec(
             sys.executable, extract_script, "--limit", "100",
@@ -173,10 +173,10 @@ async def _run_cpo_update() -> None:
             _, fb_er = await asyncio.wait_for(fallback.communicate(), timeout=600)
         except asyncio.TimeoutError:
             fallback.kill(); await fallback.wait()
-            print("[usci-update] fallback extract timed out (>600s)")
+            logging.warning("[usci-update] fallback extract timed out (>600s)")
             return
         if fallback.returncode != 0:
-            print(f"[usci-update] Fallback extract failed: {fb_er.decode(errors='replace')}")
+            logging.warning("[usci-update] Fallback extract failed: %s", fb_er.decode(errors='replace')[:500])
             return
 
     # 2. Export
@@ -188,13 +188,13 @@ async def _run_cpo_update() -> None:
         st2, er2 = await asyncio.wait_for(proc2.communicate(), timeout=120)
     except asyncio.TimeoutError:
         proc2.kill(); await proc2.wait()
-        print("[usci-update] export timed out (>120s)")
+        logging.warning("[usci-update] export timed out (>120s)")
         return
     if proc2.returncode != 0:
-        print(f"[usci-update] {export_script} failed: {er2.decode(errors='replace')}")
+        logging.warning("[usci-update] %s failed: %s", export_script, er2.decode(errors='replace')[:500])
         return
-        
-    print("[usci-update] Universal supply chain update successful.")
+
+    logging.info("[usci-update] Universal supply chain update successful.")
 
 async def _run_monthly_summary(webhook_url: str) -> None:
     """Call monthly_summary.py for every account in accounts.yaml."""
@@ -904,32 +904,32 @@ async def on_message(message):
             safe_ticker = re.sub(r'[^A-Z0-9]', '_', ticker)
             _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_")
             os.close(_fd)
-            cmd = [
-                sys.executable,
-                str(SCRAPER_BASE / "query_topic.py"),
-                ticker,
-                "--account", "all",
-                "--days", str(days),
-                "--output", out_file,
-            ]
+            try:
+                cmd = [
+                    sys.executable,
+                    str(SCRAPER_BASE / "query_topic.py"),
+                    ticker,
+                    "--account", "all",
+                    "--days", str(days),
+                    "--output", out_file,
+                ]
 
-            async with message.channel.typing():
-                async with _gemini_sem:
-                    proc = await asyncio.create_subprocess_exec(
-                        *cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        cwd=str(SCRAPER_BASE),
-                    )
-                    try:
-                        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-                    except asyncio.TimeoutError:
-                        proc.kill(); await proc.wait()
-                        await message.channel.send(f"⚠️ {ticker} 分析逾時 (>7m)，已中止。")
-                        return
+                async with message.channel.typing():
+                    async with _gemini_sem:
+                        proc = await asyncio.create_subprocess_exec(
+                            *cmd,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            cwd=str(SCRAPER_BASE),
+                        )
+                        try:
+                            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+                        except asyncio.TimeoutError:
+                            proc.kill(); await proc.wait()
+                            await message.channel.send(f"⚠️ {ticker} 分析逾時 (>7m)，已中止。")
+                            return
 
-                if proc.returncode == 0 and os.path.exists(out_file):
-                    try:
+                    if proc.returncode == 0 and os.path.exists(out_file):
                         with open(out_file, encoding="utf-8") as f:
                             res = json.load(f)
                         result_text = res.get("summary", "")[:20000]
@@ -938,16 +938,16 @@ async def on_message(message):
                                 await message.channel.send(result_text[i : i + 1900])
                         else:
                             await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
-                    except Exception as e:
-                        print(f"Error reading {ticker} output: {e}")
+                    else:
+                        if stderr:
+                            logging.warning("Error analyzing %s: %s", ticker, stderr.decode(errors='replace')[:500])
                         await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
-                    finally:
-                        if os.path.exists(out_file):
-                            os.unlink(out_file)
-                else:
-                    if stderr:
-                        print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')[:500]}")
-                    await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
+            except Exception as e:
+                logging.warning("Error reading %s output: %s", ticker, e)
+                await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
+            finally:
+                if os.path.exists(out_file):
+                    os.unlink(out_file)
 
 
 
@@ -1128,7 +1128,7 @@ async def resumex(interaction: discord.Interaction):
             p_restart.kill()
 
     # 2. 啟動監控進程 (使用 venv python)，以 start_new_session 脫離當前進程組
-    venv_python = SCRAPER_BASE / "venv" / "bin" / "python"
+    venv_python = sys.executable
     active_script = SCRAPER_BASE / "monitor_active.py"
     rss_script = SCRAPER_BASE / "monitor_rss.py"
 
