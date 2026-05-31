@@ -5,6 +5,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [4.7.1] — 2026-05-31
+
+### Security (Round 5 — Opus 4.7 review)
+
+**MEDIUM**
+- `discord_bot.py`: Temp file leak fixed in `_run_daily_summary_for_account` — `return` on timeout now inside outer `try/finally` so daily automated runs never orphan temp files
+
+**LOW**
+- `discord_bot.py`: Temp file leak fixed in `on_message $ticker` handler — same `try/finally` pattern applied
+- `discord_bot.py`: `/resumex` subprocess now uses `sys.executable` instead of hardcoded `venv/bin/python` — consistent across environments
+- `discord_bot.py`: `_run_cpo_update` `print()` calls replaced with `logging.warning()` / `logging.info()` for uniform log routing
+- `monitor_active.py`: Version string corrected from `v3.4` to `v4.7.0`
+
+### Fixed
+- `launchd/com.xtracker.discord.plist`, `launchd/com.xtracker.monitor.plist`: Log paths moved from `Desktop/…/logs/` to `~/Library/Logs/xtracker/` — resolves launchd exit code 78 (EX_CONFIG) caused by macOS TCC blocking Desktop folder access before Python spawns
+- launchd plist files added to repo under `launchd/` for version control
+- `cpo_chain/batch_embed.py`: `CAST(id AS INTEGER)` in `NOT IN` subquery — fixes type mismatch between `tweets.id` (TEXT) and `tweet_embeddings.tweet_id` (INTEGER)
+- `cpo_chain/batch_embed.py`: `INSERT OR REPLACE` replaced with `DELETE` + `INSERT` for virtual table safety
+- `cpo_chain/batch_embed.py`: Per-row `except Exception` added to embedding insert loop
+
+### Data
+- `themes/USCI_Report.md`: Regenerated 2026-05-25 — higher-confidence edges (⚠️ 0.55 → ✅ 0.95), new sub-industries: 1.6T Optical Transceivers, CPO / NVIDIA Ecosystem, CPO / 1.6T Transceiver
+
+---
+
 ## [4.7.0] — 2026-05-24
 
 ### Security (4 rounds of Opus 4.7 review)
