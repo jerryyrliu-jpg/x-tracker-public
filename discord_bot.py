@@ -1,4 +1,5 @@
 import asyncio, discord, json, os, re, sys, logging, tempfile
+from contextlib import asynccontextmanager
 from datetime import datetime, time, timezone, timedelta
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -14,7 +15,7 @@ import yaml
 _accounts_yaml_lock = asyncio.Lock()
 
 TICKER_RE = re.compile(r'^[A-Z\$][A-Z0-9.\-]{0,9}$')
-DAYS_RE = re.compile(r'\bdays?:(\d+)\b', re.IGNORECASE)
+DAYS_RE = re.compile(r'\bdays?:([^\s]+)\b', re.IGNORECASE)
 _URL_SCHEME_RE = re.compile(r'^https?://', re.IGNORECASE)
 
 _COOLDOWN_SECS = 60
@@ -28,6 +29,10 @@ _stats_cooldowns: dict[int, float] = {}  # /stats
 _pause_cooldowns: dict[int, float] = {}  # /pausex, /resumex
 _llm_cooldowns: dict[int, float] = {}   # /llm
 _gemini_sem = asyncio.Semaphore(3)       # max 3 concurrent Gemini subprocesses
+_MAX_GEMINI_QUEUE = 8
+_GEMINI_MAX_PENDING = 3 + _MAX_GEMINI_QUEUE
+_gemini_pending = 0
+_gemini_pending_lock = asyncio.Lock()
 
 
 def _try_cooldown(user_id: int, cooldown_dict: dict = None, secs: int = None) -> float:
@@ -48,12 +53,46 @@ def _try_cooldown(user_id: int, cooldown_dict: dict = None, secs: int = None) ->
     cooldown_dict[user_id] = now
     return 0.0
 
+
+def _parse_id_set(raw: str | None) -> set[int]:
+    """Parse comma-separated Discord snowflake IDs from env."""
+    if not raw:
+        return set()
+    out: set[int] = set()
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if chunk.isdigit():
+            out.add(int(chunk))
+    return out
+
+
+async def _is_owner_user(user: discord.abc.User) -> bool:
+    """Owner check with optional static owner ID allowlist."""
+    uid = getattr(user, "id", None)
+    uid_int = None
+    try:
+        uid_int = int(uid) if uid is not None else None
+    except (TypeError, ValueError):
+        uid_int = None
+    if uid_int is not None and OWNER_USER_IDS:
+        return uid_int in OWNER_USER_IDS
+    try:
+        return await bot.is_owner(user)
+    except Exception as e:
+        logging.warning("Owner check failed: %s", type(e).__name__)
+        return False
+
 SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("DISCORD_BOT_TOKEN is not set in environment")
 GUILD_ID = os.environ.get("DISCORD_GUILD_ID")  # set for dev (instant guild sync); unset = no auto-sync
+OWNER_USER_IDS = _parse_id_set(os.environ.get("DISCORD_OWNER_IDS"))
+ALLOWED_GUILD_IDS = _parse_id_set(os.environ.get("ALLOWED_GUILD_IDS"))
+ALLOWED_CHANNEL_IDS = _parse_id_set(os.environ.get("ALLOWED_CHANNEL_IDS"))
 TAIPEI = timezone(timedelta(hours=8))
 DAILY_TIME_UTC = time(12, 0, tzinfo=timezone.utc)  # 20:00 Taipei
 CONFIDENCE_TIME_UTC = time(10, 0, tzinfo=timezone.utc) # 18:00 Taipei
@@ -66,6 +105,39 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)  # prevent webhook URL leaking into logs
 bot = commands.Bot(command_prefix="$", intents=intents, allowed_mentions=discord.AllowedMentions.none())
 tree = bot.tree
+
+
+def _is_allowed_message_context(message: discord.Message) -> bool:
+    """Restrict $ticker message entrypoint to approved guild/channel context."""
+    if message.guild is None:
+        return False
+    # Default deny for message-triggered heavy analysis unless allowlist is configured.
+    if not ALLOWED_GUILD_IDS and not ALLOWED_CHANNEL_IDS:
+        return False
+    if ALLOWED_GUILD_IDS and message.guild.id not in ALLOWED_GUILD_IDS:
+        return False
+    if ALLOWED_CHANNEL_IDS and message.channel.id not in ALLOWED_CHANNEL_IDS:
+        return False
+    return True
+
+
+def _gemini_queue_saturated() -> bool:
+    """Return True when concurrent + queued heavy Gemini jobs exceed threshold."""
+    return _gemini_pending >= _GEMINI_MAX_PENDING
+
+
+@asynccontextmanager
+async def _gemini_job_slot():
+    """Track pending Gemini jobs without relying on asyncio private internals."""
+    global _gemini_pending
+    async with _gemini_pending_lock:
+        _gemini_pending += 1
+    try:
+        async with _gemini_sem:
+            yield
+    finally:
+        async with _gemini_pending_lock:
+            _gemini_pending = max(0, _gemini_pending - 1)
 
 
 def parse_ticker_message(raw: str) -> tuple[str, int]:
@@ -98,7 +170,7 @@ async def _run_daily_summary_for_account(account: str, display_name: str, webhoo
             "--account", account,
             "--output", out_file,
         ]
-        async with _gemini_sem:
+        async with _gemini_job_slot():
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -835,7 +907,13 @@ async def stats(interaction: discord.Interaction):
 @tree.command(name="summary", description="生成全標的情緒摘要報告")
 @app_commands.describe(days="要追蹤的天數 (預設 7, 上限 90)")
 async def summary(interaction: discord.Interaction, days: int = 7):
+    if not await _is_owner_user(interaction.user):
+        await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
+        return
     print(f"[bot] /summary called with days={days}")
+    if _gemini_queue_saturated():
+        await interaction.response.send_message("⚠️ 系統忙碌中，請稍後再試。", ephemeral=True)
+        return
     remaining = _try_cooldown(interaction.user.id)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
@@ -893,10 +971,15 @@ async def on_message(message):
         return
     await bot.process_commands(message)
     if message.content.startswith("$"):
+        if not _is_allowed_message_context(message):
+            return
         print(f"[bot] Message received in guild: {message.guild.name} ({message.guild.id})" if message.guild else "[bot] Message in DM")
         raw = message.content[1:].strip()
         ticker, days = parse_ticker_message(raw)
         if TICKER_RE.match(ticker):
+            if _gemini_queue_saturated():
+                await message.channel.send("⚠️ 系統忙碌中，請稍後再試。")
+                return
             remaining = _try_cooldown(message.author.id)
             if remaining > 0:
                 await message.channel.send(f"⏳ 請等 {remaining:.0f} 秒後再試。")
@@ -915,7 +998,7 @@ async def on_message(message):
                 ]
 
                 async with message.channel.typing():
-                    async with _gemini_sem:
+                    async with _gemini_job_slot():
                         proc = await asyncio.create_subprocess_exec(
                             *cmd,
                             stdout=asyncio.subprocess.PIPE,
@@ -954,6 +1037,12 @@ async def on_message(message):
 @tree.command(name="analyze", description="分析特定標的的觀點趨勢")
 @app_commands.describe(symbol="標的名稱 (如 TSLA, BTC)", days="追蹤天數 (預設 30, 上限 90)")
 async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30):
+    if not await _is_owner_user(interaction.user):
+        await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
+        return
+    if _gemini_queue_saturated():
+        await interaction.response.send_message("⚠️ 系統忙碌中，請稍後再試。", ephemeral=True)
+        return
     remaining = _try_cooldown(interaction.user.id)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
@@ -978,7 +1067,7 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
     ]
 
     try:
-        async with _gemini_sem:
+        async with _gemini_job_slot():
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -1015,6 +1104,12 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
 @tree.command(name="llm", description="摘要任意 URL 的內文，支援 X/Twitter 推文與一般網頁")
 @app_commands.describe(url="要摘要的網址（例如：https://x.com/user/status/123 或任意文章 URL）")
 async def llm_summarize(interaction: discord.Interaction, url: str):
+    if not await _is_owner_user(interaction.user):
+        await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
+        return
+    if _gemini_queue_saturated():
+        await interaction.response.send_message("⚠️ 系統忙碌中，請稍後再試。", ephemeral=True)
+        return
     remaining = _try_cooldown(interaction.user.id, _llm_cooldowns, _LLM_COOLDOWN_SECS)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
@@ -1033,7 +1128,7 @@ async def llm_summarize(interaction: discord.Interaction, url: str):
     os.close(_fd)
     try:
         cmd = [sys.executable, str(SCRAPER_BASE / "llm_url.py"), "--url", url, "--output", out_file]
-        async with _gemini_sem:
+        async with _gemini_job_slot():
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -1145,4 +1240,3 @@ async def resumex(interaction: discord.Interaction):
 
 if __name__ == "__main__":
     bot.run(TOKEN)
-

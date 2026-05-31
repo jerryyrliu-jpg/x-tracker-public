@@ -7,15 +7,31 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import os
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
+os.environ.setdefault("DISCORD_OWNER_IDS", "1")
+os.environ.setdefault("ALLOWED_GUILD_IDS", "100")
+os.environ.setdefault("ALLOWED_CHANNEL_IDS", "200")
 
 with patch("discord.ext.commands.Bot.run"):
     import discord_bot
+discord_bot.OWNER_USER_IDS = {1}
+discord_bot.ALLOWED_GUILD_IDS = {100}
+discord_bot.ALLOWED_CHANNEL_IDS = {200}
+
+
+_UID_COUNTER = 1000
 
 
 def _make_interaction():
     """Return a minimal discord.Interaction mock."""
+    discord_bot._user_cooldowns.clear()
+    discord_bot._chain_cooldowns.clear()
+    discord_bot._stats_cooldowns.clear()
+    discord_bot._pause_cooldowns.clear()
+    discord_bot._llm_cooldowns.clear()
     interaction = MagicMock()
     interaction.id = 12345
+    interaction.user = MagicMock()
+    interaction.user.id = 1
     interaction.response = AsyncMock()
     interaction.followup = AsyncMock()
     return interaction
@@ -290,12 +306,18 @@ class TestAnalyze:
 # ---------------------------------------------------------------------------
 
 def _make_message(content: str):
+    global _UID_COUNTER
+    _UID_COUNTER += 1
     msg = MagicMock()
     msg.content = content
     msg.id = 99999
     msg.author = MagicMock()
+    msg.author.id = _UID_COUNTER
     msg.author.__eq__ = lambda self, other: False  # not bot.user
+    msg.guild = MagicMock()
+    msg.guild.id = 100
     msg.channel = AsyncMock()
+    msg.channel.id = 200
     msg.channel.typing = MagicMock(return_value=AsyncMock(
         __aenter__=AsyncMock(return_value=None),
         __aexit__=AsyncMock(return_value=None),
