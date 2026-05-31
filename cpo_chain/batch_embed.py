@@ -25,9 +25,10 @@ async def batch_embed(limit=1000):
     vec_db.init_vector_tables(conn)
     
     # Find tweets that haven't been embedded yet
+    # CAST id to INTEGER to match tweet_id type
     query = """
     SELECT id, text FROM tweets 
-    WHERE id NOT IN (SELECT tweet_id FROM tweet_embeddings)
+    WHERE CAST(id AS INTEGER) NOT IN (SELECT tweet_id FROM tweet_embeddings)
     LIMIT ?
     """
     tweets = conn.execute(query, (limit,)).fetchall()
@@ -52,12 +53,16 @@ async def batch_embed(limit=1000):
             for tid, emb in zip(ids, embeddings):
                 try:
                     int_id = int(tid)
+                    # Use a separate DELETE then INSERT to be safe with virtual tables
+                    conn.execute("DELETE FROM tweet_embeddings WHERE tweet_id = ?", (int_id,))
                     conn.execute(
-                        "INSERT OR REPLACE INTO tweet_embeddings (tweet_id, embedding) VALUES (?, ?)",
+                        "INSERT INTO tweet_embeddings (tweet_id, embedding) VALUES (?, ?)",
                         (int_id, vec_db.serialize_float_list(emb))
                     )
                 except ValueError:
                     logger.warning(f"Skipping non-integer tweet_id: {tid}")
+                except Exception as e:
+                    logger.error(f"Error inserting {tid}: {e}")
         logger.info(f"Processed {i + len(batch)}/{len(tweets)}")
 
     conn.close()
