@@ -30,6 +30,7 @@ def _make_interaction():
     discord_bot._llm_cooldowns.clear()
     interaction = MagicMock()
     interaction.id = 12345
+    interaction.guild_id = 100
     interaction.user = MagicMock()
     interaction.user.id = 1
     interaction.response = AsyncMock()

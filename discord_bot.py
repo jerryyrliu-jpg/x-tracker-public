@@ -33,6 +33,8 @@ _MAX_GEMINI_QUEUE = 8
 _GEMINI_MAX_PENDING = 3 + _MAX_GEMINI_QUEUE
 _gemini_pending = 0
 _gemini_pending_lock = asyncio.Lock()
+_cpo_update_lock = asyncio.Lock()        # prevents overlapping CPO extract/export runs
+_COOLDOWN_MAX_ENTRIES = 500              # per-dict cap to bound memory growth
 
 
 def _try_cooldown(user_id: int, cooldown_dict: dict = None, secs: int = None) -> float:
@@ -47,6 +49,10 @@ def _try_cooldown(user_id: int, cooldown_dict: dict = None, secs: int = None) ->
     stale = [uid for uid, ts in cooldown_dict.items() if now - ts > secs * 10]
     for uid in stale:
         del cooldown_dict[uid]
+    # Hard cap: evict oldest entry when dict exceeds limit
+    if len(cooldown_dict) >= _COOLDOWN_MAX_ENTRIES:
+        oldest = min(cooldown_dict, key=cooldown_dict.__getitem__)
+        del cooldown_dict[oldest]
     remaining = secs - (now - cooldown_dict.get(user_id, 0.0))
     if remaining > 0:
         return remaining
@@ -119,6 +125,15 @@ def _is_allowed_message_context(message: discord.Message) -> bool:
     if ALLOWED_CHANNEL_IDS and message.channel.id not in ALLOWED_CHANNEL_IDS:
         return False
     return True
+
+
+def _is_allowed_interaction_guild(interaction: discord.Interaction) -> bool:
+    """Restrict slash commands to approved guilds; pass-through if allowlist not configured."""
+    if not ALLOWED_GUILD_IDS:
+        return True
+    if interaction.guild_id is None:
+        return False
+    return interaction.guild_id in ALLOWED_GUILD_IDS
 
 
 async def _gemini_queue_saturated() -> bool:
@@ -221,6 +236,15 @@ async def _run_daily_summary(accounts_cfg: dict, default_webhook: str) -> None:
 
 async def _run_cpo_update() -> None:
     """Run Universal Supply Chain extraction and export as subprocess."""
+    if _cpo_update_lock.locked():
+        logging.warning("[usci-update] previous run still in progress, skipping")
+        return
+    async with _cpo_update_lock:
+        await _run_cpo_update_inner()
+
+
+async def _run_cpo_update_inner() -> None:
+    """Inner implementation; always called under _cpo_update_lock."""
     extract_script = str(SCRAPER_BASE / "cpo_chain" / "extract_universal.py")
     export_script = str(SCRAPER_BASE / "cpo_chain" / "export_universal.py")
     
@@ -552,6 +576,9 @@ def format_confidence(conf: float, edgar: float, news: float) -> str:
     company="查詢特定公司"
 )
 async def supply_query(interaction: discord.Interaction, industry: str = "CPO", tier: int = None, country: str = None, company: str = None):
+    if not _is_allowed_interaction_guild(interaction):
+        await interaction.response.send_message("❌ 此伺服器不在允許清單中。", ephemeral=True)
+        return
     remaining = _try_cooldown(interaction.user.id, _chain_cooldowns, _CHAIN_COOLDOWN_SECS)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
@@ -666,6 +693,9 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
 @tree.command(name="chain", description="列出 CPO 供應鏈上中下游公司全景")
 @app_commands.describe(industry="產業語境 (預設 CPO)")
 async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
+    if not _is_allowed_interaction_guild(interaction):
+        await interaction.response.send_message("❌ 此伺服器不在允許清單中。", ephemeral=True)
+        return
     remaining = _try_cooldown(interaction.user.id, _chain_cooldowns, _CHAIN_COOLDOWN_SECS)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
@@ -881,6 +911,9 @@ async def account_toggle(interaction: discord.Interaction, action: str, name: st
 
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")
 async def stats(interaction: discord.Interaction):
+    if not _is_allowed_interaction_guild(interaction):
+        await interaction.response.send_message("❌ 此伺服器不在允許清單中。", ephemeral=True)
+        return
     remaining = _try_cooldown(interaction.user.id, _stats_cooldowns, _STATS_COOLDOWN_SECS)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
@@ -1186,8 +1219,9 @@ async def pausex(interaction: discord.Interaction):
             await asyncio.wait_for(p.wait(), timeout=5)
         except asyncio.TimeoutError:
             pass
-    # 2. 強制關閉 Chrome (帶有特定 profile)
-    p3 = await asyncio.create_subprocess_exec("pkill", "-f", "Google Chrome.*x_scraper")
+    # 2. 強制關閉 Chrome (匹配完整 user-data-dir 路徑，避免誤殺其他進程)
+    chrome_profile = str(SCRAPER_BASE / ".profiles" / "x_scraper")
+    p3 = await asyncio.create_subprocess_exec("pkill", "-f", chrome_profile)
     try:
         await asyncio.wait_for(p3.wait(), timeout=5)
     except asyncio.TimeoutError:

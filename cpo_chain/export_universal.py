@@ -153,8 +153,10 @@ def export_all():
                 f_md.write("\n")
                 
     cache_path = OUTPUT_DIR / "usci_tiers_cache.json"
-    with open(cache_path, 'w', encoding='utf-8') as f:
+    tmp_path = cache_path.with_suffix(".json.tmp")
+    with open(tmp_path, 'w', encoding='utf-8') as f:
         json.dump(universal_cache, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, cache_path)
     
     print(f"Universal cache exported to {cache_path}")
     conn.close()

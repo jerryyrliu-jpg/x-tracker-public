@@ -138,7 +138,7 @@ class ConfidenceUpdater:
                             conn.execute("""
                                 INSERT INTO confidence_audit(relation_id, source, boost_value, status, snippet)
                                 VALUES (?, 'edgar', 0.0, 'api_error', ?)
-                            """, (row["id"], str(e)[:200]))
+                            """, (row["id"], type(e).__name__))
                         except Exception:
                             pass
 

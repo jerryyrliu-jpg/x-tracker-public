@@ -102,6 +102,9 @@ class _SSRFSafeTransport(httpx.AsyncHTTPTransport):
     """
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        # Validate scheme on every hop (catches redirect to file://, ftp://, etc.)
+        if request.url.scheme not in ("http", "https"):
+            raise ValueError(f"不允許使用非 HTTP/HTTPS 協議：{request.url.scheme}")
         # Validate port on every hop (catches redirect-based port smuggling)
         if request.url.port not in _ALLOWED_PORTS:
             raise ValueError(f"不允許連接到非標準埠：{request.url.port}")
