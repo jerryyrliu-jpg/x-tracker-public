@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [4.7.2] — 2026-05-31
+
+### Security (Round 6 — Opus 4.8 review)
+
+**HIGH**
+- `discord_bot.py`: `/pausex` Chrome `pkill` pattern narrowed from broad regex `"Google Chrome.*x_scraper"` to full absolute `user-data-dir` path (`SCRAPER_BASE/.profiles/x_scraper`) — prevents collateral kill of unrelated Chrome processes
+
+**MEDIUM**
+- `discord_bot.py`: `/supply`, `/chain`, `/stats` now guarded by `_is_allowed_interaction_guild()` — data no longer accessible from arbitrary servers the bot is added to
+- `discord_bot.py`: `_run_cpo_update` wrapped in `_cpo_update_lock` (`asyncio.Lock`) — prevents overlapping extract/export runs on Monday schedule
+- `cpo_chain/export_universal.py`: `usci_tiers_cache.json` written atomically via temp file + `os.replace` — eliminates half-written JSON visible to `/supply` and `/chain`
+- `llm_url.py`: `_SSRFSafeTransport.handle_async_request` validates scheme is `http`/`https` on every redirect hop before IP/port checks — closes `file://`/`ftp://` redirect bypass
+
+**LOW**
+- `discord_bot.py`: `_try_cooldown` evicts oldest entry when dict reaches 500 entries — hard cap on memory growth from unauthenticated callers
+- `cpo_chain/confidence_updater.py`: audit `snippet` stores `type(e).__name__` instead of `str(e)[:200]` — prevents internal path/message leakage into DB audit table
+
+---
+
 ## [4.7.1] — 2026-05-31
 
 ### Security (Round 5 — Opus 4.7 review)
