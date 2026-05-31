@@ -121,9 +121,10 @@ def _is_allowed_message_context(message: discord.Message) -> bool:
     return True
 
 
-def _gemini_queue_saturated() -> bool:
+async def _gemini_queue_saturated() -> bool:
     """Return True when concurrent + queued heavy Gemini jobs exceed threshold."""
-    return _gemini_pending >= _GEMINI_MAX_PENDING
+    async with _gemini_pending_lock:
+        return _gemini_pending >= _GEMINI_MAX_PENDING
 
 
 @asynccontextmanager
@@ -911,7 +912,7 @@ async def summary(interaction: discord.Interaction, days: int = 7):
         await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
         return
     print(f"[bot] /summary called with days={days}")
-    if _gemini_queue_saturated():
+    if await _gemini_queue_saturated():
         await interaction.response.send_message("⚠️ 系統忙碌中，請稍後再試。", ephemeral=True)
         return
     remaining = _try_cooldown(interaction.user.id)
@@ -931,7 +932,7 @@ async def summary(interaction: discord.Interaction, days: int = 7):
     ]
 
     try:
-        async with _gemini_sem:
+        async with _gemini_job_slot():
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -977,7 +978,7 @@ async def on_message(message):
         raw = message.content[1:].strip()
         ticker, days = parse_ticker_message(raw)
         if TICKER_RE.match(ticker):
-            if _gemini_queue_saturated():
+            if await _gemini_queue_saturated():
                 await message.channel.send("⚠️ 系統忙碌中，請稍後再試。")
                 return
             remaining = _try_cooldown(message.author.id)
@@ -1040,7 +1041,7 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
     if not await _is_owner_user(interaction.user):
         await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
         return
-    if _gemini_queue_saturated():
+    if await _gemini_queue_saturated():
         await interaction.response.send_message("⚠️ 系統忙碌中，請稍後再試。", ephemeral=True)
         return
     remaining = _try_cooldown(interaction.user.id)
@@ -1107,7 +1108,7 @@ async def llm_summarize(interaction: discord.Interaction, url: str):
     if not await _is_owner_user(interaction.user):
         await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
         return
-    if _gemini_queue_saturated():
+    if await _gemini_queue_saturated():
         await interaction.response.send_message("⚠️ 系統忙碌中，請稍後再試。", ephemeral=True)
         return
     remaining = _try_cooldown(interaction.user.id, _llm_cooldowns, _LLM_COOLDOWN_SECS)
