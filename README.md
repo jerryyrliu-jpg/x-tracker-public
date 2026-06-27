@@ -155,6 +155,7 @@ Recommended preflight flow:
 python3 scripts/prepare_public_sync.py --write-manifest /tmp/xtracker-public-manifest.txt
 python3 scripts/check_public_sync.py --paths-file /tmp/xtracker-public-manifest.txt
 python3 scripts/sync_public_repo.py --manifest /tmp/xtracker-public-manifest.txt --target-root /path/to/x-tracker-public-clone
+scripts/release_public.sh --target-root /path/to/x-tracker-public-clone
 ```
 
 *Powered by Playwright · Gemini · Discord.py · Streamlit · SQLite FTS5*

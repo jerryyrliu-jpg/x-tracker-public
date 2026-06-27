@@ -27,6 +27,7 @@ This document defines what may be published from the private `x-tracker` reposit
 - `scripts/import_cpo_chain.py`
 - `scripts/migrate_v2.py`
 - `scripts/prepare_public_sync.py`
+- `scripts/release_public.sh`
 - `scripts/restart_chrome.sh`
 - `scripts/run_news_discovery.py`
 - `scripts/update_network_html.py`
@@ -66,6 +67,7 @@ This document defines what may be published from the private `x-tracker` reposit
 - `tests/test_paths.py`
 - `tests/test_prepare_public_sync.py`
 - `tests/test_prompt.py`
+- `tests/test_release_public_script.py`
 - `tests/test_slash_commands.py`
 - `tests/test_summary.py`
 - `tests/test_sync_public_repo.py`

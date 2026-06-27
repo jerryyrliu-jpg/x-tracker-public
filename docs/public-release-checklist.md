@@ -12,6 +12,7 @@ Use this checklist before pushing any change set to `jerryyrliu-jpg/x-tracker-pu
 6. If the checker reports prohibited content findings, sanitize the affected files before continuing.
 7. If the checker reports diff-check errors, fix them before continuing.
 8. Run `python3 scripts/sync_public_repo.py --manifest /tmp/xtracker-public-manifest.txt --target-root /path/to/x-tracker-public-clone` when you are ready to stage the public repo contents.
+9. Or run `scripts/release_public.sh --target-root /path/to/x-tracker-public-clone` to execute preflight, sync, smoke tests, and final `git status` in one step.
 
 ## Required Files
 
