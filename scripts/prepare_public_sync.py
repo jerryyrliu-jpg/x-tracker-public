@@ -33,13 +33,21 @@ def get_public_merge_base() -> str:
 
 def iter_candidate_paths() -> list[str]:
     merge_base = get_public_merge_base()
-    result = subprocess.run(
+    diff_result = subprocess.run(
         ["git", "diff", "--name-only", merge_base],
         check=True,
         capture_output=True,
         text=True,
     )
-    return [line for line in result.stdout.splitlines() if line]
+    untracked_result = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return sorted(
+        {line for line in (diff_result.stdout.splitlines() + untracked_result.stdout.splitlines()) if line}
+    )
 
 
 def filter_candidate_paths(candidates: list[str], allowlist: set[str]) -> tuple[list[str], list[str]]:

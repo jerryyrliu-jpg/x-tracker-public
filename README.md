@@ -145,6 +145,7 @@ streamlit run dashboard.py --server.address 127.0.0.1
 
 For public repository publication rules and the release gate, see:
 
+- `CHANGELOG.md`
 - `docs/public-sync-policy.md`
 - `docs/public-release-checklist.md`
 
@@ -153,6 +154,7 @@ Recommended preflight flow:
 ```bash
 python3 scripts/prepare_public_sync.py --write-manifest /tmp/xtracker-public-manifest.txt
 python3 scripts/check_public_sync.py --paths-file /tmp/xtracker-public-manifest.txt
+python3 scripts/sync_public_repo.py --manifest /tmp/xtracker-public-manifest.txt --target-root /path/to/x-tracker-public-clone
 ```
 
 *Powered by Playwright · Gemini · Discord.py · Streamlit · SQLite FTS5*

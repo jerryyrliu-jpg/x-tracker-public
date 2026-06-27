@@ -9,6 +9,7 @@ from pathlib import Path
 
 ALLOWED_EXACT_PATHS = {
     ".gitignore",
+    "CHANGELOG.md",
     "README.md",
     "accounts.example.yaml",
     "config.env.example",
@@ -58,6 +59,7 @@ ALLOWED_EXACT_PATHS = {
     "lib/vis-9.1.2/vis-network.css",
     "lib/vis-9.1.2/vis-network.min.js",
     "scripts/check_public_sync.py",
+    "scripts/sync_public_repo.py",
     "tests/__init__.py",
     "tests/test_check_public_sync.py",
     "tests/repro_supply_bug.py",
@@ -77,6 +79,7 @@ ALLOWED_EXACT_PATHS = {
     "tests/test_prompt.py",
     "tests/test_slash_commands.py",
     "tests/test_summary.py",
+    "tests/test_sync_public_repo.py",
     "tests/test_update_network_html.py",
     "tests/test_utils.py",
 }
@@ -179,13 +182,24 @@ def classify_path(path: Path) -> str:
 
 def iter_candidate_paths() -> list[Path]:
     merge_base = get_public_merge_base()
-    result = subprocess.run(
+    diff_result = subprocess.run(
         ["git", "diff", "--name-only", merge_base],
         check=True,
         capture_output=True,
         text=True,
     )
-    return [Path(line) for line in result.stdout.splitlines() if line]
+    untracked_result = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    candidates = {
+        Path(line)
+        for line in (diff_result.stdout.splitlines() + untracked_result.stdout.splitlines())
+        if line
+    }
+    return sorted(candidates, key=lambda path: path.as_posix())
 
 
 def load_candidate_paths(path: Path) -> list[Path]:

@@ -145,8 +145,32 @@ def test_iter_candidate_paths_uses_public_diff(monkeypatch):
     assert calls == [
         ["git", "merge-base", "public/main", "HEAD"],
         ["git", "diff", "--name-only", "abc123"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
     ]
     assert paths == [Path("README.md"), Path("scripts/update_network_html.py")]
+
+
+def test_iter_candidate_paths_includes_untracked_files(monkeypatch):
+    class Result:
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    def fake_run(cmd, check, capture_output, text):
+        if cmd[:3] == ["git", "merge-base", "public/main"]:
+            return Result("abc123\n")
+        if cmd[:3] == ["git", "diff", "--name-only"]:
+            return Result("README.md\n")
+        return Result("CHANGELOG.md\nscripts/sync_public_repo.py\n")
+
+    monkeypatch.setattr("scripts.check_public_sync.subprocess.run", fake_run)
+
+    paths = iter_candidate_paths()
+
+    assert paths == [
+        Path("CHANGELOG.md"),
+        Path("README.md"),
+        Path("scripts/sync_public_repo.py"),
+    ]
 
 
 def test_run_diff_check_uses_merge_base_and_optional_paths(monkeypatch):

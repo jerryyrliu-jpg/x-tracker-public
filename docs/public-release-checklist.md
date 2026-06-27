@@ -11,12 +11,14 @@ Use this checklist before pushing any change set to `jerryyrliu-jpg/x-tracker-pu
 5. If the checker reports `review` or `forbidden` paths, stop and fix the manifest candidate set first.
 6. If the checker reports prohibited content findings, sanitize the affected files before continuing.
 7. If the checker reports diff-check errors, fix them before continuing.
+8. Run `python3 scripts/sync_public_repo.py --manifest /tmp/xtracker-public-manifest.txt --target-root /path/to/x-tracker-public-clone` when you are ready to stage the public repo contents.
 
 ## Required Files
 
 1. Confirm `accounts.example.yaml` exists and is up to date.
 2. Confirm `docs/public-sync-policy.md` is present when public-sync rules change.
-3. Confirm any newly intended public doc path is added to the allowlist in `docs/public-sync-policy.md` before publication.
+3. Confirm `CHANGELOG.md` is updated for the public release when user-visible behavior changes.
+4. Confirm any newly intended public doc path is added to the allowlist in `docs/public-sync-policy.md` before publication.
 
 ## Candidate Review
 

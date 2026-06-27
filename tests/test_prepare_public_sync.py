@@ -84,7 +84,27 @@ def test_iter_candidate_paths_uses_merge_base_diff(monkeypatch):
     assert calls == [
         ["git", "merge-base", "public/main", "HEAD"],
         ["git", "diff", "--name-only", "base123"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
     ]
+
+
+def test_iter_candidate_paths_includes_untracked_files(monkeypatch):
+    class Result:
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    def fake_run(cmd, check, capture_output, text):
+        if cmd[:3] == ["git", "merge-base", "public/main"]:
+            return Result("base123\n")
+        if cmd[:3] == ["git", "diff", "--name-only"]:
+            return Result("README.md\n")
+        return Result("CHANGELOG.md\nscripts/sync_public_repo.py\n")
+
+    monkeypatch.setattr("scripts.prepare_public_sync.subprocess.run", fake_run)
+
+    candidates = iter_candidate_paths()
+
+    assert candidates == ["CHANGELOG.md", "README.md", "scripts/sync_public_repo.py"]
 
 
 def test_main_writes_manifest_and_exits_zero_when_all_candidates_allowed(monkeypatch, tmp_path, capsys):

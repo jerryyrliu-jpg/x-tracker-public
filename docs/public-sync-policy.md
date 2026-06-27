@@ -4,6 +4,7 @@ This document defines what may be published from the private `x-tracker` reposit
 
 ## Allowed Content
 - `.gitignore`
+- `CHANGELOG.md`
 - `README.md`
 - `config.env.example`
 - `accounts.example.yaml`
@@ -48,6 +49,7 @@ This document defines what may be published from the private `x-tracker` reposit
 - `docs/public-sync-policy.md`
 - `docs/public-release-checklist.md`
 - `scripts/check_public_sync.py`
+- `scripts/sync_public_repo.py`
 - `tests/__init__.py`
 - `tests/repro_supply_bug.py`
 - `tests/test_cache_key.py`
@@ -66,6 +68,7 @@ This document defines what may be published from the private `x-tracker` reposit
 - `tests/test_prompt.py`
 - `tests/test_slash_commands.py`
 - `tests/test_summary.py`
+- `tests/test_sync_public_repo.py`
 - `tests/test_update_network_html.py`
 - `tests/test_utils.py`
 - `tests/test_check_public_sync.py`
