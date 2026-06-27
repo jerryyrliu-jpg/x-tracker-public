@@ -1,6 +1,5 @@
 import json
 import sqlite3
-import subprocess
 import pytest
 from unittest.mock import MagicMock
 from cpo_chain.db import init_usci_tables
@@ -34,13 +33,10 @@ def _make_extractor(keywords_path):
 
 
 def _mock_subprocess(monkeypatch, stdout: str, returncode: int = 0):
-    """Monkeypatch subprocess.run in news_extractor to return fixed output."""
-    mock = MagicMock()
-    mock.returncode = returncode
-    mock.stdout = stdout
-    mock.stderr = ""
-    monkeypatch.setattr("cpo_chain.news_extractor.subprocess.run", lambda *a, **kw: mock)
-    return mock
+    """Monkeypatch run_text_prompt in news_extractor to return fixed output."""
+    # news_extractor.py now uses run_text_prompt (not subprocess directly)
+    monkeypatch.setattr("cpo_chain.news_extractor.run_text_prompt", lambda *a, **kw: stdout)
+    return stdout
 
 
 # ---------------------------------------------------------------------------
@@ -161,3 +157,30 @@ def test_industry_context_enum_enforced():
     """INDUSTRY_CONTEXTS must contain exactly the expected 6 values."""
     expected = ["CPO", "HBM", "AI_Server", "Liquid_Cooling", "Advanced_Packaging", "Other"]
     assert INDUSTRY_CONTEXTS == expected
+
+
+def test_existing_relation_lookup_handles_none_role_and_context(db_conn, keywords_path):
+    """Existing relation path should tolerate explicit null role/context values from the LLM."""
+    db_conn.execute("INSERT INTO industry_entities (id, name, ticker) VALUES (10, 'TSMC', 'TSM')")
+    db_conn.execute("INSERT INTO industry_entities (id, name, ticker) VALUES (11, 'NVIDIA', 'NVDA')")
+    db_conn.execute("""
+        INSERT INTO industry_relations
+            (id, from_company_id, to_company_id, role, role_category, base_score, confidence, industry_context)
+        VALUES (99, 10, 11, 'supplier', 'upstream', 0.8, 0.8, 'Other')
+    """)
+    db_conn.execute("""
+        INSERT INTO news_articles (id, url, source, title, summary, processed)
+        VALUES (5, 'http://example.com/5', 'google_news', 'TSMC supplies NVIDIA', '', 0)
+    """)
+    db_conn.commit()
+
+    extractor = _make_extractor(keywords_path)
+    relation = {"supplier": "TSMC", "customer": "NVIDIA", "role": None, "industry_context": None}
+    extractor.extract_from_article = MagicMock(return_value=[relation])
+    extractor.resolver.resolve = MagicMock(side_effect=[(10, "TSMC", "TSM"), (11, "NVIDIA", "NVDA")])
+
+    result = extractor.run(db_conn, limit=10)
+
+    assert result["errors"] == 0
+    row = db_conn.execute("SELECT processed FROM news_articles WHERE id=5").fetchone()
+    assert row[0] == 1

@@ -1,0 +1,11 @@
+accounts:
+  sample_account_1:
+    display_name: Sample Account 1
+    description: Example account for local setup and testing.
+    enabled: false
+    discord_webhook_env: DISCORD_WEBHOOK_SAMPLE_ACCOUNT_1
+  sample_account_2:
+    display_name: Sample Account 2
+    description: Example account for local setup and testing.
+    enabled: false
+    discord_webhook_env: DISCORD_WEBHOOK_SAMPLE_ACCOUNT_2

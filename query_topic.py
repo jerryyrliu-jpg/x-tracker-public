@@ -6,6 +6,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import yaml
+from llm_client import run_text_prompt
 
 _TOPIC_RE = re.compile(r'^[A-Za-z\$][A-Za-z0-9.\-]{0,19}$')
 _ISOLATION_TAGS = re.compile(r'</?(?:TWEET_DATA|NEWS_DATA)>', re.IGNORECASE)
@@ -153,19 +154,7 @@ _DEFAULT_ACCOUNT = "aleabitoreddit"
 
 def _run_gemini_cli(prompt: str, timeout: int = 300) -> str:
     """Run Gemini via CLI subprocess."""
-    cmd = ["gemini", "--model", _GEMINI_MODEL]
-    try:
-        res = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8", timeout=timeout)
-    except subprocess.TimeoutExpired:
-        logger.warning("Gemini CLI call timed out.")
-        return ""
-    except Exception as e:
-        logger.warning("Gemini CLI call error: %s", type(e).__name__)
-        return ""
-    if res.returncode != 0 or not res.stdout.strip():
-        logger.warning("Gemini CLI call failed: %s", res.stderr[:300])
-        return ""
-    return res.stdout
+    return run_text_prompt(prompt, timeout=timeout, backend="gemini-cli", gemini_model=_GEMINI_MODEL)
 
 
 def _run_gemini_sdk(prompt: str, timeout: int = 300) -> str:
@@ -203,11 +192,15 @@ def _run_gemini(prompt: str, timeout: int = 300) -> str:
     GEMINI_BACKEND=auto — SDK if GEMINI_API_KEY is set, else CLI (default)
     """
     backend = os.getenv("GEMINI_BACKEND", "auto").lower()
+    if backend == "auto" and os.getenv("GEMINI_API_KEY"):
+        return _run_gemini_sdk(prompt, timeout)
+    if backend == "auto":
+        return run_text_prompt(prompt, timeout=timeout, backend="auto", gemini_model=_GEMINI_MODEL)
+    if backend == "sdk":
+        return _run_gemini_sdk(prompt, timeout)
     if backend == "cli":
         return _run_gemini_cli(prompt, timeout)
-    if backend == "sdk" or (backend == "auto" and os.getenv("GEMINI_API_KEY")):
-        return _run_gemini_sdk(prompt, timeout)
-    return _run_gemini_cli(prompt, timeout)
+    raise ValueError(f"Unknown GEMINI_BACKEND: {backend}")
 
 
 def get_recent_tweets(conn, days: int, account: str = "aleabitoreddit") -> list:
@@ -436,7 +429,7 @@ def main():
         parser.add_argument("--output")
         parser.add_argument("--force", action="store_true")
         args = parser.parse_args()
-    
+
         if args.summary:
             days = max(1, min(args.days, 90))
             print(f"[Live Analysis] 正在分析最近 {days} 天所有標的...", file=sys.stderr)
@@ -450,25 +443,25 @@ def main():
                     json.dump(result_data, f)
             print(summary)
             return
-    
+
         if not args.topic:
             print("Error: topic is required unless --summary is used.", file=sys.stderr)
             sys.exit(1)
-    
+
         print(f"[Live Analysis] 正在呼叫 Gemini 分析 {args.topic}...")
         result = analyze_topic(args.topic, account=args.account, days=args.days, force=args.force)
         if result is None:
             print(f"No tweets found for '{args.topic}' in last {args.days} days.", file=sys.stderr)
             return
-    
+
         if result.get("cached"):
             print(f"[Cache Hit] 讀取 {args.topic} 的快取數據。")
         if args.output:
             with open(args.output, "w") as f:
                 json.dump(result, f)
         print(result.get("summary", ""))
-    
-    
+
+
     except Exception as e:
         logger.exception("Fatal error in main")
         print(f"Internal error: {e}", file=sys.stderr)

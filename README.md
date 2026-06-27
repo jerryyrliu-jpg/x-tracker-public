@@ -1,111 +1,106 @@
-# X-Tracker v4.7.0
+# X-Tracker v4.6.4
 
-基於 Playwright CDP 的多帳號推特追蹤與 AI 投資分析系統。透過 Gemini 深度分析推文情感趨勢，整合 CPO 供應鏈知識圖譜，透過 Discord Bot 與 Streamlit Dashboard 呈現。
+A Playwright CDP-based multi-account X tracking and AI investment analysis system. It uses Gemini to analyze sentiment trends, integrates a CPO supply-chain knowledge graph, and surfaces results through a Discord bot and Streamlit dashboard.
 
 ---
 
-## 🏗 架構
+## 🏗 Architecture
 
 ```
 Chrome (CDP 9222)
-    └─ scraper_playwright.py   ← DOM 擷取；FTS5 trigger 自動同步；--account arg
-         ↑ 每帳號每 ~2hr 輪詢
-monitor_active.py              ← PID lock、metrics、self-healing、heartbeat
-                                  ├─ 遍歷 accounts.yaml 所有帳號
-                                  └─ 每月 1 日 09:00+ 自動執行月報
+    └─ scraper_playwright.py   ← DOM extraction; FTS5 trigger sync; `--account` arg
+         ↑ each account is polled every ~2hr
+monitor_active.py              ← PID lock, metrics, self-healing, heartbeat
+                                  ├─ iterates all accounts defined in local accounts.yaml
+                                  └─ runs the monthly summary automatically on the 1st at 09:00+
 
 tweets.db (SQLite WAL + FTS5 porter + USCI schema)
     ├─ query_topic.py          ← analyze_topic() → Gemini SDK/CLI → JSON cache
     │    ↑ imported by dashboard; called by discord_bot subprocess
-    └─ discord_bot.py          ← $TICKER [days:N]、/stats、/supply、/chain、/analyze
+    └─ discord_bot.py          ← $TICKER [days:N], /stats, /supply, /chain, /analyze
 
 dashboard.py (Streamlit)
-    ├─ Tab1: K 線圖 + 情感箭頭（信心分數縮放）+ force_refresh
-    └─ Tab2: D3.js CPO 供應鏈知識圖譜
+    ├─ Tab 1: candlestick chart + sentiment arrows (scaled by confidence) + force_refresh
+    └─ Tab 2: D3.js CPO supply-chain knowledge graph
 
-utils.py                       ← DB、Discord、logger、PIDLock、Metrics
-accounts.yaml                  ← 多帳號設定（aleabitoreddit、CKCapitalxx、gbstocks）
+utils.py                       ← DB, Discord, logger, PIDLock, metrics
+accounts.yaml                  ← user-defined tracked accounts (local copy of accounts.example.yaml)
 
-cpo_chain/output/index.html    ← D3.js CPO Network（搜尋 + 4 類別篩選）
-scripts/update_network_html.py ← 從 USCI DB 重新產生 index.html
+cpo_chain/output/index.html    ← D3.js CPO network (search + 4 category filters)
+scripts/update_network_html.py ← regenerates index.html from the USCI database
 
-launchd (開機自啟 + crash 自動重啟):
+launchd (auto-start on login + automatic crash restart):
 ~/Library/LaunchAgents/com.xtracker.discord.plist
 ~/Library/LaunchAgents/com.xtracker.monitor.plist
 ```
 
-**資料現況**：3 帳號 · SQLite WAL · FTS5 porter tokenizer · USCI DB（48 CPO 公司，106 供應關係）· 3 天 Gemini cache
+**Current snapshot**: SQLite WAL · FTS5 porter tokenizer · USCI graph database · 3-day Gemini cache
 
 ---
 
-## 🚀 核心功能
+## 🚀 Core Features
 
-1. **多帳號爬取** — `accounts.yaml` 驅動，monitor 遍歷所有 enabled 帳號；scraper 接受 `--account` 參數
-2. **Playwright CDP** — 連結真實瀏覽器，繞過 Cloudflare 403 / Bot 偵測
-3. **Active Polling** — 每 ~2hr 主動輪詢，隨機抖動 ±5–15 分鐘，3 次失敗自動重啟 Chrome
-4. **Gemini 分析** — `GEMINI_BACKEND=sdk|cli|auto`；`GEMINI_API_KEY` 設定後自動切換 SDK（無 subprocess overhead）
-5. **5 級情感 + 信心分數** — StrongBullish / Bullish / Neutral / Bearish / StrongBearish；confidence 0.0–1.0 縮放 K 線箭頭大小
-6. **多帳號搜尋** — `--account all` 跨帳號分析，prompt 按帳號分組
-7. **FTS5 Trigger 同步** — INSERT 觸發器自動維護 FTS index，無需 full rebuild
-8. **Discord Bot**：
-   - `$TICKER [days:N]` — 跨帳號情感分析（含信心分數）
-   - `/stats` — 每帳號推文數 + 最後爬取時間
-   - `/chain` — CPO 供應鏈上中下游全景
-   - `/analyze` — slash command 版查詢
-   - `/pausex` / `/resumex` — 暫停 / 恢復 monitor（Chrome 資源管理）
-9. **Streamlit Dashboard** — K 線圖直接 import `analyze_topic()`（無 subprocess）；auto-refresh meta tag；force_refresh checkbox
-10. **月報排程** — monitor 每月 1 日 09:00+ 自動執行 `monthly_summary.py`，`.last_monthly_summary` 防重複
+1. **Multi-account crawling** — Driven by `accounts.yaml`; the monitor iterates over enabled accounts, and the scraper accepts the `--account` argument
+2. **Playwright CDP** — Connects to a real browser to work through Cloudflare 403 / bot detection
+3. **Active polling** — Polls every ~2 hours with random jitter of ±5–15 minutes and automatically restarts Chrome after 3 failures
+4. **Gemini analysis** — `GEMINI_BACKEND=sdk|cli|auto`; setting `GEMINI_API_KEY` automatically enables SDK mode without subprocess overhead
+5. **5-level sentiment + confidence** — StrongBullish / Bullish / Neutral / Bearish / StrongBearish; confidence 0.0–1.0 scales candlestick arrow size
+6. **Multi-account search** — `--account all` performs cross-account analysis with prompts grouped by account
+7. **FTS5 trigger sync** — INSERT triggers automatically maintain the FTS index without a full rebuild
+8. **Discord Bot**:
+   - `$TICKER [days:N]` — cross-account sentiment analysis with confidence scores
+   - `/stats` — per-account post counts plus last crawl time
+   - `/chain` — full upstream/midstream/downstream CPO supply-chain view
+   - `/analyze` — slash-command version of the query flow
+   - `/pausex` / `/resumex` — pause and resume the monitor for Chrome resource management
+9. **Streamlit dashboard** — The candlestick chart imports `analyze_topic()` directly with no subprocess; includes auto-refresh meta tags and a `force_refresh` checkbox
+10. **Monthly summary schedule** — The monitor automatically runs `monthly_summary.py` on the 1st of each month at 09:00+, guarded by `.last_monthly_summary` to prevent duplicate runs
 
 ---
 
-## ⚙️ 設定
+## ⚙️ Setup
 
 ### `.env`
 ```
-GEMINI_API_KEY=...          # Gemini SDK 模式（設定後自動啟用）
-GEMINI_BACKEND=auto         # sdk | cli | auto（預設 auto）
+GEMINI_API_KEY=...          # Gemini SDK mode (enables automatically when set)
+GEMINI_BACKEND=auto         # sdk | cli | auto (default: auto)
 GEMINI_MODEL=gemini-2.5-flash-lite
-MONTHLY_SUMMARY_TIMEOUT=600 # 月報逾時秒數（預設 600）
-EDGAR_USER_AGENT=x-tracker your@email.com  # SEC EDGAR 必填 User-Agent
+MONTHLY_SUMMARY_TIMEOUT=600 # Monthly summary timeout in seconds (default: 600)
+EDGAR_USER_AGENT=x-tracker your@email.com  # Required SEC EDGAR user agent
 ```
 
-### `accounts.yaml`
+### `accounts.example.yaml`
 
-Set webhook URLs via environment variables (never hardcode them):
+Copy this file to `accounts.yaml` locally before running the app.
+Replace the sample keys with your real X usernames before running, and set `enabled: true` only for the accounts you want to track. Keep webhook URLs in environment variables.
 
-```yaml
-accounts:
-  aleabitoreddit:
-    enabled: true
-    discord_webhook_env: DISCORD_WEBHOOK_ALEABITOREDDIT
-  CKCapitalxx:
-    enabled: true
-    discord_webhook_env: DISCORD_WEBHOOK_CKCAPITALXX
-  gbstocks:
-    enabled: true
-    discord_webhook_env: DISCORD_WEBHOOK_GBSTOCKS
+```bash
+cp accounts.example.yaml accounts.yaml
 ```
+
+Your copied `accounts.yaml` should reference environment variable names, never hardcoded webhook URLs. The exact sample shape is defined in `accounts.example.yaml`.
 
 Export each variable in your shell or `.env` file:
 ```bash
-export DISCORD_WEBHOOK_ALEABITOREDDIT="https://discord.com/api/webhooks/..."
+export DISCORD_WEBHOOK_SAMPLE_ACCOUNT_1="https://discord.com/api/webhooks/..."
+export DISCORD_WEBHOOK_SAMPLE_ACCOUNT_2="https://discord.com/api/webhooks/..."
 ```
 
 ---
 
-## 🛠 快速啟動
+## 🛠 Quick Start
 
-### 方式 A — launchd（推薦，開機自啟）
+### Option A - launchd (recommended, auto-start on login)
 ```bash
 launchctl load ~/Library/LaunchAgents/com.xtracker.discord.plist
 launchctl load ~/Library/LaunchAgents/com.xtracker.monitor.plist
-# 查看狀態
+# Check status
 launchctl list | grep xtracker
-# 查看 log
+# Check logs
 tail -f logs/monitor_active.log
 ```
 
-### 方式 B — 手動背景執行
+### Option B - run manually in the background
 ```bash
 source venv/bin/activate
 nohup python3 monitor_active.py > logs/monitor_active.log 2>&1 &
@@ -118,35 +113,46 @@ source venv/bin/activate
 streamlit run dashboard.py --server.address 127.0.0.1
 ```
 
-> ⚠️ Always run with `--server.address 127.0.0.1` to bind to localhost only. Without this flag, Streamlit defaults to all interfaces and exposes the dashboard (and Gemini API costs) to anyone on the network.
+> ⚠️ Always run with `--server.address 127.0.0.1` to bind to localhost only. Without this flag, Streamlit defaults to all interfaces and exposes the dashboard, and potentially Gemini API costs, to anyone on the network.
 
 ---
 
-## 📜 版本記錄
+## 📜 Version History
 
-> 完整 change list 見 [CHANGELOG.md](./CHANGELOG.md)
-
-| 版本 | 日期 | 主要變更 |
+| Version | Date | Main Changes |
 |------|------|---------|
-| v4.7.0 | 2026-05-24 | Security Round 1–4（Opus 4.7）：SSRF DNS pinning、Prompt injection URL sanitization、Temp file leak fix × 4 commands、DOM virtualization fix、/i/status/ redirect、70 unit tests |
-| v4.6.4 | 2026-05-04 | Security R3：extract_universal timeout、monthly_summary TWEET_DATA 隔離+timeout+GEMINI_MODEL、export_universal SQL parameterized、/chain escape_markdown、/account error redact、dashboard subprocess text=True、get_running_loop、HTML 原子寫入、EDGAR_USER_AGENT env var |
-| v4.6.3 | 2026-05-04 | Security R2：$summary_test owner-only+cooldown+timeout、9 處 proc.communicate 加 wait_for、atomic _try_cooldown、EntityResolver commit、INSERT OR IGNORE、cache TTL 解耦、argparse 移入函式、bare except 修正 |
-| v4.6.2 | 2026-05-04 | Security R1：httpx log 過濾、/pausex /resumex owner guard、Gemini prompt TWEET_DATA 隔離、EXTRACTION_PROMPT brace escape、60s rate limiting、SQL parameterized、</script> XSS 修正 |
-| v4.6.1 | 2026-04-30 | Code review fixes：import os、monthly stamp 成功才寫、SDK candidates check、logger 統一、_DEFAULT_ACCOUNT 常數、encoding='utf-8'、FTS5 OperationalError log |
-| v4.6 | 2026-04-30 | P-2 Gemini SDK/CLI toggle；P-1 FTS5 trigger 增量同步；F-3 月報排程 |
-| v4.5.1 | 2026-04-30 | Code review fixes：immutable cache、defensive float+clamp、find/rfind JSON、CPO regen timeout、KeepAlive dict |
-| v4.5 | 2026-04-29 | A-3 信心分數（confidence 0.0–1.0）；D-2 dashboard 直接 import analyze_topic()；P-4 launchd plist |
-| v4.4.1 | 2026-04-29 | Code review fixes：meta-refresh、_run_gemini() 提取、tempfile、per-account cap |
-| v4.4 | 2026-04-29 | 多帳號搜尋（--account all）；5 級情感；Dashboard auto-refresh |
-| v4.3 | 2026-04-28 | P0/P1 全部：cache key、typing indicator、FTS5 porter、/stats 強化、Gemini 日期上下文 |
-| v4.2.1 | 2026-04-22 | Code review fixes：await fallback、escape_markdown、XSS 防護 |
-| v4.2 | 2026-04-21 | 每日摘要（3 msgs）；/account enable/disable |
-| v4.1 | 2026-04-19 | accounts.yaml enabled flag；monitor hot-reload；CPO Network D3.js |
-| v3.7.x | 2026-04-17 | CPO 供應鏈：USCI DB schema、48 公司 106 關係、/chain 指令 |
-| v3.6 | 2026-04-04 | 多帳號爬取；/summary 指令 |
-| v3.5 | 2026-04-03 | restart_chrome.sh；FTS5 porter；Path(__file__) |
-| v3.4 | 2026-03-31 | Active Polling；self-healing；jitter；metrics |
+| v4.6.4 | 2026-05-04 | Security R3: `extract_universal` timeout, `monthly_summary` TWEET_DATA isolation + timeout + `GEMINI_MODEL`, parameterized `export_universal` SQL, `/chain` markdown escaping, `/account` error redaction, dashboard subprocess `text=True`, `get_running_loop`, atomic HTML writes, `EDGAR_USER_AGENT` env var |
+| v4.6.3 | 2026-05-04 | Security R2: `$summary_test` owner-only + cooldown + timeout, `proc.communicate` with `wait_for` in 9 places, atomic `_try_cooldown`, `EntityResolver` commit, `INSERT OR IGNORE`, decoupled cache TTL, moved `argparse` into a function, fixed bare `except` |
+| v4.6.2 | 2026-05-04 | Security R1: `httpx` log filtering, `/pausex` and `/resumex` owner guard, Gemini prompt TWEET_DATA isolation, `EXTRACTION_PROMPT` brace escaping, 60-second rate limiting, parameterized SQL, `</script>` XSS fix |
+| v4.6.1 | 2026-04-30 | Code review fixes: import `os`, only write the monthly stamp after success, SDK candidate checks, unified logger, `_DEFAULT_ACCOUNT` constant, `encoding='utf-8'`, FTS5 OperationalError logging |
+| v4.6 | 2026-04-30 | P-2 Gemini SDK/CLI toggle; P-1 incremental FTS5 trigger sync; F-3 monthly summary schedule |
+| v4.5.1 | 2026-04-30 | Code review fixes: immutable cache, defensive float clamping, `find`/`rfind` JSON handling, CPO regeneration timeout, `KeepAlive` dict |
+| v4.5 | 2026-04-29 | A-3 confidence scores (0.0–1.0); D-2 dashboard imports `analyze_topic()` directly; P-4 launchd plist |
+| v4.4.1 | 2026-04-29 | Code review fixes: meta refresh, extracted `_run_gemini()`, `tempfile`, per-account cap |
+| v4.4 | 2026-04-29 | Multi-account search (`--account all`); 5-level sentiment; dashboard auto-refresh |
+| v4.3 | 2026-04-28 | All P0/P1 items: cache key, typing indicator, FTS5 porter, improved `/stats`, Gemini date context |
+| v4.2.1 | 2026-04-22 | Code review fixes: await fallback, `escape_markdown`, XSS protection |
+| v4.2 | 2026-04-21 | Daily summary (3 messages); `/account` enable/disable |
+| v4.1 | 2026-04-19 | `accounts.yaml` enabled flag; monitor hot reload; CPO Network D3.js |
+| v3.7.x | 2026-04-17 | CPO supply chain: USCI DB schema, 48 companies, 106 relationships, `/chain` command |
+| v3.6 | 2026-04-04 | Multi-account crawling; `/summary` command |
+| v3.5 | 2026-04-03 | `restart_chrome.sh`; FTS5 porter; `Path(__file__)` |
+| v3.4 | 2026-03-31 | Active polling; self-healing; jitter; metrics |
 
 ---
+
+## Public Sync
+
+For public repository publication rules and the release gate, see:
+
+- `docs/public-sync-policy.md`
+- `docs/public-release-checklist.md`
+
+Recommended preflight flow:
+
+```bash
+python3 scripts/prepare_public_sync.py --write-manifest /tmp/xtracker-public-manifest.txt
+python3 scripts/check_public_sync.py --paths-file /tmp/xtracker-public-manifest.txt
+```
 
 *Powered by Playwright · Gemini · Discord.py · Streamlit · SQLite FTS5*

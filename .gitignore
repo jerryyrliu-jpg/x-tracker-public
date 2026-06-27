@@ -9,11 +9,14 @@ debug*.png
 chrome.log
 __pycache__/
 .env
+accounts.yaml
 venv/
 cpo_chain/output/
 *.db
 graph.html
 .worktrees/
+.gemini/
+.superpowers/
 temp_acc.txt
 test_lite.json
 .last_guid

@@ -9,7 +9,7 @@ def init_vector_tables(conn):
     """
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
-    
+
     # In sqlite-vec vec0, the first column is the integer primary key
     conn.execute("""
         CREATE VIRTUAL TABLE IF NOT EXISTS tweet_embeddings USING vec0(

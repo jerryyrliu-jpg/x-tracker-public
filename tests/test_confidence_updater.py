@@ -25,7 +25,7 @@ def mock_db(tmp_path):
     conn.execute("CREATE TABLE industry_relations (id INTEGER PRIMARY KEY, from_company_id INTEGER, to_company_id INTEGER, base_score REAL DEFAULT 0.5, edgar_score REAL DEFAULT 0.0, news_score REAL DEFAULT 0.0, confidence REAL DEFAULT 0.5)")
     conn.execute("CREATE TABLE confidence_audit (id INTEGER PRIMARY KEY, relation_id INTEGER, source TEXT CHECK(source IN ('edgar','google_news','yahoo_rss')), boost_value REAL, status TEXT, snippet TEXT)")
     conn.execute("CREATE TABLE company_ticker_map (id INTEGER PRIMARY KEY, company_name TEXT, updated_at INTEGER)")
-    
+
     conn.execute("INSERT INTO industry_entities (id, name) VALUES (1, 'NVIDIA'), (2, 'TSMC')")
     conn.execute("INSERT INTO industry_relations (id, from_company_id, to_company_id) VALUES (1, 1, 2)")
     conn.commit()
@@ -37,16 +37,16 @@ def test_run_updates_score(mock_db):
     news = MockNews(0.1)
     mapper = MockMapper()
     updater = ConfidenceUpdater(mock_db, edgar, news, mapper)
-    
+
     result = updater.run(limit=10)
     assert result["updated"] == 1
-    
+
     conn = sqlite3.connect(mock_db)
     row = conn.execute("SELECT edgar_score, news_score, confidence FROM industry_relations WHERE id=1").fetchone()
     assert row[0] == pytest.approx(0.2)
     assert row[1] == pytest.approx(0.1)
     assert row[2] == pytest.approx(0.8) # 0.5 + 0.2 + 0.1
-    
+
     # Audit check
     audits = conn.execute("SELECT source, boost_value FROM confidence_audit").fetchall()
     assert len(audits) == 2
@@ -93,10 +93,10 @@ def test_dry_run_no_db_change(mock_db):
     news = MockNews(0.1)
     mapper = MockMapper()
     updater = ConfidenceUpdater(mock_db, edgar, news, mapper)
-    
+
     result = updater.run(limit=10, dry_run=True)
     assert result["updated"] == 1 # Would be updated
-    
+
     conn = sqlite3.connect(mock_db)
     row = conn.execute("SELECT edgar_score, news_score FROM industry_relations WHERE id=1").fetchone()
     assert row[0] == 0.0

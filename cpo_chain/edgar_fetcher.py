@@ -62,7 +62,7 @@ class EdgarFetcher:
                 resp.raise_for_status()
                 data = resp.json()
                 hits = data.get("hits", {}).get("hits", [])
-                
+
                 results = []
                 for h in hits[:5]:
                     source = h.get("_source", {})

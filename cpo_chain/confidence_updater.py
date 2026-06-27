@@ -46,7 +46,7 @@ class ConfidenceUpdater:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.execute("PRAGMA foreign_keys=ON;")
-        
+
         # Ensure company ticker map is fresh
         self.mapper.load_or_refresh(conn)
 
@@ -71,7 +71,7 @@ class ConfidenceUpdater:
             for i, row in enumerate(rows):
                 try:
                     logger.info(f"Processing relation {row['id']}: {row['from_name']} -> {row['to_name']}")
-                    
+
                     # === Edgar ===
                     edgar_hits = self.edgar.search_relation(row["from_name"], row["to_name"])
                     new_edgar = self.edgar.calc_edgar_score(edgar_hits)
@@ -102,14 +102,14 @@ class ConfidenceUpdater:
                                 confidence = MAX(confidence, ?)
                             WHERE id = ?
                         """, (new_edgar, new_news, new_conf, row["id"]))
-                        
+
                         if edgar_changed:
                             conn.execute("""
                                 INSERT INTO confidence_audit
                                 (relation_id, source, boost_value, status, snippet)
                                 VALUES (?, 'edgar', ?, 'success', ?)
                             """, (row["id"], new_edgar - row["edgar_score"], f"Found {len(edgar_hits)} filings"))
-                            
+
                         if news_changed:
                             _VALID_SOURCES = {"edgar", "google_news", "yahoo_rss"}
                             audit_source = news_source if news_source in _VALID_SOURCES else "google_news"
@@ -118,7 +118,7 @@ class ConfidenceUpdater:
                                 (relation_id, source, boost_value, status, snippet)
                                 VALUES (?, ?, ?, 'success', ?)
                             """, (row["id"], audit_source, new_news - row["news_score"], f"Found news via {news_source}"))
-                            
+
                         updated += 1
                     else:
                         skipped += 1
@@ -138,7 +138,7 @@ class ConfidenceUpdater:
                             conn.execute("""
                                 INSERT INTO confidence_audit(relation_id, source, boost_value, status, snippet)
                                 VALUES (?, 'edgar', 0.0, 'api_error', ?)
-                            """, (row["id"], type(e).__name__))
+                            """, (row["id"], str(e)[:200]))
                         except Exception:
                             pass
 

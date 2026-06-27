@@ -1,5 +1,5 @@
 import asyncio, discord, json, os, re, sys, logging, tempfile
-from contextlib import asynccontextmanager
+from collections import defaultdict
 from datetime import datetime, time, timezone, timedelta
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -15,80 +15,67 @@ import yaml
 _accounts_yaml_lock = asyncio.Lock()
 
 TICKER_RE = re.compile(r'^[A-Z\$][A-Z0-9.\-]{0,9}$')
-DAYS_RE = re.compile(r'\bdays?:([^\s]+)\b', re.IGNORECASE)
-_URL_SCHEME_RE = re.compile(r'^https?://', re.IGNORECASE)
+DAYS_RE = re.compile(r'\bdays?:(\d+)\b', re.IGNORECASE)
 
 _COOLDOWN_SECS = 60
 _CHAIN_COOLDOWN_SECS = 10
 _STATS_COOLDOWN_SECS = 5
 _PAUSE_COOLDOWN_SECS = 30
-_LLM_COOLDOWN_SECS = 30
 _user_cooldowns: dict[int, float] = {}   # heavy ops (Gemini)
 _chain_cooldowns: dict[int, float] = {}  # /chain, /supply
 _stats_cooldowns: dict[int, float] = {}  # /stats
 _pause_cooldowns: dict[int, float] = {}  # /pausex, /resumex
-_llm_cooldowns: dict[int, float] = {}   # /llm
 _gemini_sem = asyncio.Semaphore(3)       # max 3 concurrent Gemini subprocesses
-_MAX_GEMINI_QUEUE = 8
-_GEMINI_MAX_PENDING = 3 + _MAX_GEMINI_QUEUE
-_gemini_pending = 0
-_gemini_pending_lock = asyncio.Lock()
-_cpo_update_lock = asyncio.Lock()        # prevents overlapping CPO extract/export runs
-_COOLDOWN_MAX_ENTRIES = 500              # per-dict cap to bound memory growth
+
+TIER_LABELS: dict[int, str] = {
+    0: "🏢 終端客戶",
+    1: "⚙️ 直接供應商",
+    2: "🔄 二階供應商",
+    3: "🪨 原材料",
+}
+
+_user_locks: dict = {}  # per-user asyncio.Lock for cooldown TOCTOU protection
 
 
-def _try_cooldown(user_id: int, cooldown_dict: dict = None, secs: int = None) -> float:
+def _lookup_industry_cache(industries: dict, requested: str):
+    if not industries:
+        return None
+    result = industries.get(requested.upper())
+    if result is not None:
+        return result
+    result = industries.get(requested)
+    if result is not None:
+        return result
+    normalized = re.sub(r"\s+", " ", requested.replace("_", " ")).strip().lower()
+    normalized = re.sub(r"\s*/\s*", " / ", normalized)
+    for key, value in industries.items():
+        candidate = re.sub(r"\s+", " ", key.replace("_", " ")).strip().lower()
+        candidate = re.sub(r"\s*/\s*", " / ", candidate)
+        if candidate == normalized:
+            return value
+    return None
+
+
+async def _try_cooldown(user_id: int, cooldown_dict: dict = None, secs: int = None) -> float:
     """Atomically check and mark cooldown. Returns 0.0 if allowed, else remaining seconds.
-    Also prunes entries older than 10× the cooldown window."""
-    import time
+    Also prunes entries older than 10× the cooldown window.
+    Uses a per-user asyncio.Lock to prevent TOCTOU race conditions."""
+    import time as _time
     if cooldown_dict is None:
         cooldown_dict = _user_cooldowns
     if secs is None:
         secs = _COOLDOWN_SECS
-    now = time.time()
-    stale = [uid for uid, ts in cooldown_dict.items() if now - ts > secs * 10]
-    for uid in stale:
-        del cooldown_dict[uid]
-    # Hard cap: evict oldest entry when dict exceeds limit
-    if len(cooldown_dict) >= _COOLDOWN_MAX_ENTRIES:
-        oldest = min(cooldown_dict, key=cooldown_dict.__getitem__)
-        del cooldown_dict[oldest]
-    remaining = secs - (now - cooldown_dict.get(user_id, 0.0))
-    if remaining > 0:
-        return remaining
-    cooldown_dict[user_id] = now
-    return 0.0
-
-
-def _parse_id_set(raw: str | None) -> set[int]:
-    """Parse comma-separated Discord snowflake IDs from env."""
-    if not raw:
-        return set()
-    out: set[int] = set()
-    for chunk in raw.split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        if chunk.isdigit():
-            out.add(int(chunk))
-    return out
-
-
-async def _is_owner_user(user: discord.abc.User) -> bool:
-    """Owner check with optional static owner ID allowlist."""
-    uid = getattr(user, "id", None)
-    uid_int = None
-    try:
-        uid_int = int(uid) if uid is not None else None
-    except (TypeError, ValueError):
-        uid_int = None
-    if uid_int is not None and OWNER_USER_IDS:
-        return uid_int in OWNER_USER_IDS
-    try:
-        return await bot.is_owner(user)
-    except Exception as e:
-        logging.warning("Owner check failed: %s", type(e).__name__)
-        return False
+    lock = _user_locks.setdefault(user_id, asyncio.Lock())
+    async with lock:
+        now = _time.time()
+        stale = [uid for uid, ts in cooldown_dict.items() if now - ts > secs * 10]
+        for uid in stale:
+            del cooldown_dict[uid]
+        remaining = secs - (now - cooldown_dict.get(user_id, 0.0))
+        if remaining > 0:
+            return remaining
+        cooldown_dict[user_id] = now
+        return 0.0
 
 SCRAPER_BASE = Path(__file__).resolve().parent
 load_dotenv(SCRAPER_BASE / ".env")
@@ -96,9 +83,6 @@ TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("DISCORD_BOT_TOKEN is not set in environment")
 GUILD_ID = os.environ.get("DISCORD_GUILD_ID")  # set for dev (instant guild sync); unset = no auto-sync
-OWNER_USER_IDS = _parse_id_set(os.environ.get("DISCORD_OWNER_IDS"))
-ALLOWED_GUILD_IDS = _parse_id_set(os.environ.get("ALLOWED_GUILD_IDS"))
-ALLOWED_CHANNEL_IDS = _parse_id_set(os.environ.get("ALLOWED_CHANNEL_IDS"))
 TAIPEI = timezone(timedelta(hours=8))
 DAILY_TIME_UTC = time(12, 0, tzinfo=timezone.utc)  # 20:00 Taipei
 CONFIDENCE_TIME_UTC = time(10, 0, tzinfo=timezone.utc) # 18:00 Taipei
@@ -111,49 +95,6 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)  # prevent webhook URL leaking into logs
 bot = commands.Bot(command_prefix="$", intents=intents, allowed_mentions=discord.AllowedMentions.none())
 tree = bot.tree
-
-
-def _is_allowed_message_context(message: discord.Message) -> bool:
-    """Restrict $ticker message entrypoint to approved guild/channel context."""
-    if message.guild is None:
-        return False
-    # Default deny for message-triggered heavy analysis unless allowlist is configured.
-    if not ALLOWED_GUILD_IDS and not ALLOWED_CHANNEL_IDS:
-        return False
-    if ALLOWED_GUILD_IDS and message.guild.id not in ALLOWED_GUILD_IDS:
-        return False
-    if ALLOWED_CHANNEL_IDS and message.channel.id not in ALLOWED_CHANNEL_IDS:
-        return False
-    return True
-
-
-def _is_allowed_interaction_guild(interaction: discord.Interaction) -> bool:
-    """Restrict slash commands to approved guilds; pass-through if allowlist not configured."""
-    if not ALLOWED_GUILD_IDS:
-        return True
-    if interaction.guild_id is None:
-        return False
-    return interaction.guild_id in ALLOWED_GUILD_IDS
-
-
-async def _gemini_queue_saturated() -> bool:
-    """Return True when concurrent + queued heavy Gemini jobs exceed threshold."""
-    async with _gemini_pending_lock:
-        return _gemini_pending >= _GEMINI_MAX_PENDING
-
-
-@asynccontextmanager
-async def _gemini_job_slot():
-    """Track pending Gemini jobs without relying on asyncio private internals."""
-    global _gemini_pending
-    async with _gemini_pending_lock:
-        _gemini_pending += 1
-    try:
-        async with _gemini_sem:
-            yield
-    finally:
-        async with _gemini_pending_lock:
-            _gemini_pending = max(0, _gemini_pending - 1)
 
 
 def parse_ticker_message(raw: str) -> tuple[str, int]:
@@ -169,6 +110,8 @@ def parse_ticker_message(raw: str) -> tuple[str, int]:
         if val.isdigit():
             days = max(1, min(int(val), 90))
         raw = DAYS_RE.sub("", raw)
+    else:
+        raw = re.sub(r"\bdays?:\S+\b", "", raw, flags=re.IGNORECASE)
     return raw.strip().upper(), days
 
 
@@ -178,29 +121,29 @@ async def _run_daily_summary_for_account(account: str, display_name: str, webhoo
     today = datetime.now(TAIPEI).strftime("%Y-%m-%d")
     _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_daily_")
     os.close(_fd)
-    try:
-        cmd = [
-            sys.executable,
-            str(SCRAPER_BASE / "query_topic.py"),
-            "--summary", "--days", "1",
-            "--account", account,
-            "--output", out_file,
-        ]
-        async with _gemini_job_slot():
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(SCRAPER_BASE),
-            )
-            try:
-                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-                await send_discord(webhook_url, f"⚠️ @{account} 每日摘要逾時 (>7m)，已跳過。")
-                return
-        if proc.returncode == 0 and os.path.exists(out_file):
+    cmd = [
+        sys.executable,
+        str(SCRAPER_BASE / "query_topic.py"),
+        "--summary", "--days", "1",
+        "--account", account,
+        "--output", out_file,
+    ]
+    async with _gemini_sem:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(SCRAPER_BASE),
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            await send_discord(webhook_url, f"⚠️ @{account} 每日摘要逾時 (>7m)，已跳過。")
+            return
+    if proc.returncode == 0 and os.path.exists(out_file):
+        try:
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
             text = res.get("summary", "")[:20000]
@@ -210,14 +153,14 @@ async def _run_daily_summary_for_account(account: str, display_name: str, webhoo
                     await send_discord(webhook_url, (header if i == 0 else "") + text[i:i + 1900])
             else:
                 await send_discord(webhook_url, f"⚠️ @{account} 每日摘要：今日無推文資料。")
-        else:
-            logging.warning("[auto-daily] %s query_topic failed: %s", account, stderr.decode(errors='replace')[:500])
-            await send_discord(webhook_url, f"⚠️ @{account} 每日摘要失敗，請查看伺服器日誌。")
-    except Exception as e:
-        logging.warning("[auto-daily] %s error: %s", account, e)
-    finally:
-        if os.path.exists(out_file):
-            os.unlink(out_file)
+        except Exception as e:
+            print(f"[auto-daily] {account} error reading output: {e}")
+        finally:
+            if os.path.exists(out_file):
+                os.unlink(out_file)
+    else:
+        print(f"[auto-daily] {account} query_topic failed: {stderr.decode(errors='replace')[:500]}")
+        await send_discord(webhook_url, f"⚠️ @{account} 每日摘要失敗，請查看伺服器日誌。")
 
 
 async def _run_daily_summary(accounts_cfg: dict, default_webhook: str) -> None:
@@ -236,18 +179,9 @@ async def _run_daily_summary(accounts_cfg: dict, default_webhook: str) -> None:
 
 async def _run_cpo_update() -> None:
     """Run Universal Supply Chain extraction and export as subprocess."""
-    if _cpo_update_lock.locked():
-        logging.warning("[usci-update] previous run still in progress, skipping")
-        return
-    async with _cpo_update_lock:
-        await _run_cpo_update_inner()
-
-
-async def _run_cpo_update_inner() -> None:
-    """Inner implementation; always called under _cpo_update_lock."""
     extract_script = str(SCRAPER_BASE / "cpo_chain" / "extract_universal.py")
     export_script = str(SCRAPER_BASE / "cpo_chain" / "export_universal.py")
-    
+
     # 1. Extract with vector search and larger limit
     proc1 = await asyncio.create_subprocess_exec(
         sys.executable, extract_script, "--limit", "200", "--vector",
@@ -257,10 +191,10 @@ async def _run_cpo_update_inner() -> None:
         st1, er1 = await asyncio.wait_for(proc1.communicate(), timeout=600)
     except asyncio.TimeoutError:
         proc1.kill(); await proc1.wait()
-        logging.warning("[usci-update] extract timed out (>600s)")
+        print("[usci-update] extract timed out (>600s)")
         return
     if proc1.returncode != 0:
-        logging.warning("[usci-update] %s failed: %s", extract_script, er1.decode(errors='replace')[:500])
+        print(f"[usci-update] {extract_script} failed: {er1.decode(errors='replace')}")
         # Fallback to keyword search if vector fails — must await to avoid race with export
         fallback = await asyncio.create_subprocess_exec(
             sys.executable, extract_script, "--limit", "100",
@@ -270,10 +204,10 @@ async def _run_cpo_update_inner() -> None:
             _, fb_er = await asyncio.wait_for(fallback.communicate(), timeout=600)
         except asyncio.TimeoutError:
             fallback.kill(); await fallback.wait()
-            logging.warning("[usci-update] fallback extract timed out (>600s)")
+            print("[usci-update] fallback extract timed out (>600s)")
             return
         if fallback.returncode != 0:
-            logging.warning("[usci-update] Fallback extract failed: %s", fb_er.decode(errors='replace')[:500])
+            print(f"[usci-update] Fallback extract failed: {fb_er.decode(errors='replace')}")
             return
 
     # 2. Export
@@ -285,20 +219,19 @@ async def _run_cpo_update_inner() -> None:
         st2, er2 = await asyncio.wait_for(proc2.communicate(), timeout=120)
     except asyncio.TimeoutError:
         proc2.kill(); await proc2.wait()
-        logging.warning("[usci-update] export timed out (>120s)")
+        print("[usci-update] export timed out (>120s)")
         return
     if proc2.returncode != 0:
-        logging.warning("[usci-update] %s failed: %s", export_script, er2.decode(errors='replace')[:500])
+        print(f"[usci-update] {export_script} failed: {er2.decode(errors='replace')}")
         return
 
-    logging.info("[usci-update] Universal supply chain update successful.")
+    print("[usci-update] Universal supply chain update successful.")
 
 async def _run_monthly_summary(webhook_url: str) -> None:
     """Call monthly_summary.py for every account in accounts.yaml."""
     try:
-        async with _accounts_yaml_lock:
-            with open(SCRAPER_BASE / "accounts.yaml") as f:
-                accounts = list(yaml.safe_load(f).get("accounts", {}).keys())
+        with open(SCRAPER_BASE / "accounts.yaml") as f:
+            accounts = list(yaml.safe_load(f).get("accounts", {}).keys())
     except Exception as e:
         print(f"[auto-monthly] failed to load accounts.yaml: {e}")
         await send_discord(webhook_url, "⚠️ 月度摘要失敗：無法讀取 accounts.yaml，請查看伺服器日誌。")
@@ -337,7 +270,7 @@ async def _run_confidence_boost() -> None:
     edgar = EdgarFetcher()
     news = CompositeNewsFetcher(mapper=mapper)
     updater = ConfidenceUpdater(db_path, edgar, news, mapper)
-    
+
     loop = asyncio.get_running_loop()
     try:
         # Run 100 relations per day
@@ -429,9 +362,8 @@ async def scheduled_summary():
     print(f"[scheduler] running at {now_taipei.strftime('%Y-%m-%d %H:%M')} Taipei")
 
     try:
-        async with _accounts_yaml_lock:
-            with open(SCRAPER_BASE / "accounts.yaml") as f:
-                accounts_cfg = yaml.safe_load(f).get("accounts", {})
+        with open(SCRAPER_BASE / "accounts.yaml") as f:
+            accounts_cfg = yaml.safe_load(f).get("accounts", {})
     except Exception as e:
         print(f"[scheduler] failed to load accounts.yaml: {e}")
         return
@@ -451,7 +383,7 @@ async def scheduled_summary():
     if now_taipei.day == 1:
         print("[scheduler] 1st of month — running monthly summary")
         await _run_monthly_summary(webhook_url)
-        
+
     if now_taipei.weekday() == 0: # Monday
         print("[scheduler] Monday — running CPO chain update")
         await _run_cpo_update()
@@ -470,11 +402,11 @@ async def on_ready():
             print(f"[bot] Guild synced {len(synced)} commands.")
         except Exception as e:
             print(f"[bot] Guild sync error: {e}")
-    
+
 
 
     print(f"[bot] Bot is ready!")
-    await bot.change_presence(activity=discord.Game(name="v4.7.0"))
+    await bot.change_presence(activity=discord.Game(name="V3.7_LOCAL_ACTIVE"))
     if not scheduled_summary.is_running():
         scheduled_summary.start()
     if not scheduled_confidence_boost.is_running():
@@ -489,7 +421,7 @@ async def on_ready():
 @commands.is_owner()
 async def summary_prefix(ctx, days: int = 1):
     days = max(1, min(days, 90))
-    remaining = _try_cooldown(ctx.author.id)
+    remaining = await _try_cooldown(ctx.author.id)
     if remaining > 0:
         await ctx.send(f"⏳ 請等 {remaining:.0f} 秒後再試。")
         return
@@ -506,20 +438,21 @@ async def summary_prefix(ctx, days: int = 1):
         "--output", out_file,
     ]
 
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(SCRAPER_BASE),
+    )
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(SCRAPER_BASE),
-        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+    except asyncio.TimeoutError:
+        proc.kill(); await proc.wait()
+        await ctx.send("⚠️ 分析逾時 (>7m)，已中止。")
+        return
+
+    if proc.returncode == 0 and os.path.exists(out_file):
         try:
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-        except asyncio.TimeoutError:
-            proc.kill(); await proc.wait()
-            await ctx.send("⚠️ 分析逾時 (>7m)，已中止。")
-            return
-        if proc.returncode == 0 and os.path.exists(out_file):
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
             text = res.get("summary", "")
@@ -528,15 +461,15 @@ async def summary_prefix(ctx, days: int = 1):
                     await ctx.send(text[i : i + 1900])
             else:
                 await ctx.send("分析失敗，今日無資料。")
-        else:
-            print(f"[summary_test] failed: {stderr.decode(errors='replace')[:200]}")
-            await ctx.send("分析執行失敗，請查看伺服器日誌。")
-    except Exception as e:
-        print(f"Error reading summary_test output: {e}")
-        await ctx.send("讀取分析結果失敗。")
-    finally:
-        if os.path.exists(out_file):
-            os.unlink(out_file)
+        except Exception as e:
+            print(f"Error reading summary_test output: {e}")
+            await ctx.send("讀取分析結果失敗。")
+        finally:
+            if os.path.exists(out_file):
+                os.unlink(out_file)
+    else:
+        print(f"[summary_test] failed: {stderr.decode(errors='replace')[:200]}")
+        await ctx.send("分析執行失敗，請查看伺服器日誌。")
 
 @bot.command(name="sync")
 @commands.is_owner()
@@ -562,7 +495,7 @@ def format_confidence(conf: float, edgar: float, news: float) -> str:
         sources.append(f"SEC×{count}")
     if news > 0:
         sources.append("📰 News×1")
-    
+
     badge = "✅ High" if conf >= 0.8 else ("📄 Mid" if conf >= 0.6 else "⚠️ Low")
     detail = f" ({', '.join(sources)})" if sources else " (Twitter only)"
     return f"[{badge}{detail}]"
@@ -576,10 +509,7 @@ def format_confidence(conf: float, edgar: float, news: float) -> str:
     company="查詢特定公司"
 )
 async def supply_query(interaction: discord.Interaction, industry: str = "CPO", tier: int = None, country: str = None, company: str = None):
-    if not _is_allowed_interaction_guild(interaction):
-        await interaction.response.send_message("❌ 此伺服器不在允許清單中。", ephemeral=True)
-        return
-    remaining = _try_cooldown(interaction.user.id, _chain_cooldowns, _CHAIN_COOLDOWN_SECS)
+    remaining = await _try_cooldown(interaction.user.id, _chain_cooldowns, _CHAIN_COOLDOWN_SECS)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
@@ -589,7 +519,7 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
         return
     await interaction.response.defer(thinking=True)
     cache_path = SCRAPER_BASE / "cpo_chain" / "output" / "usci_tiers_cache.json"
-    
+
     if not cache_path.exists():
         await interaction.followup.send("⚠️ 尚未生成 USCI 快取，請等待下次排程或手動執行。")
         return
@@ -597,18 +527,15 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
     try:
         with open(cache_path, 'r', encoding='utf-8') as f:
             full_data = json.load(f)
-        
+
         metadata = full_data.get("metadata", {})
         gen_at_str = metadata.get("generated_at", "")
-        gen_at = datetime.fromisoformat(gen_at_str) if gen_at_str else datetime.now(timezone.utc)
-        now_for_stale = datetime.now(gen_at.tzinfo) if gen_at.tzinfo else datetime.now()
-        is_stale = (now_for_stale - gen_at).days >= 8
-        
+        gen_at = datetime.fromisoformat(gen_at_str) if gen_at_str else datetime.now()
+        is_stale = (datetime.now() - gen_at).days >= 8
+
         # Filter by industry context
-        industry_data = full_data.get("industries", {}).get(industry.upper())
-        if not industry_data:
-            industry_data = full_data.get("industries", {}).get(industry)
-            
+        industry_data = _lookup_industry_cache(full_data.get("industries", {}), industry)
+
         if not industry_data:
             available = ", ".join(full_data.get("industries", {}).keys())
             await interaction.followup.send(f"🔍 找不到產業語境 '{industry}'。目前可用: {available}")
@@ -616,16 +543,16 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
 
         tiers_list = industry_data.get("tiers", [])
         links = industry_data.get("links", [])
-        
+
         results = []
         node_map = {r['id']: r for r in tiers_list}
-        
+
         for item in tiers_list:
             t_name = item.get("name", "Unknown")
             t_val = item.get("tier", 99)
             t_country = item.get("country", "")
             t_id = item.get("id")
-            
+
             if tier is not None and t_val != tier: continue
             # Corrected Multi-match Logic
             t_ticker = str(item.get("ticker", "") or "").upper()
@@ -634,10 +561,10 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
                 if s not in t_name.upper() and s != t_ticker:
                     continue
             if country and country.upper() != (t_country or "").upper(): continue
-            
+
             country_tag = f"[{t_country}] " if t_country else ""
             line = f"T{t_val}: {country_tag}**{discord.utils.escape_markdown(t_name)}**"
-            
+
             # Find customers (links where this company is source)
             customers = [l for l in links if l['source'] == t_id]
             if customers:
@@ -650,7 +577,7 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
                     target_groups[target_id]['roles'].append(l.get('role', 'Partner'))
                     if l.get('confidence', 0) > target_groups[target_id]['best_conf'].get('confidence', 0):
                         target_groups[target_id]['best_conf'] = l
-                
+
                 cust_parts = []
                 for target_id, data in target_groups.items():
                     target_node = node_map.get(target_id, {})
@@ -661,18 +588,18 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
                     l = data['best_conf']
                     conf_str = format_confidence(l.get('confidence', 0.5), l.get('edgar_score', 0), l.get('news_score', 0))
                     cust_parts.append(f"→ {discord.utils.escape_markdown(target_name)}: {discord.utils.escape_markdown(role_str)} {conf_str}")
-                
+
                 line += "\n  " + "\n  ".join(cust_parts)
-                
+
             results.append(line)
-        
+
         if not results:
             await interaction.followup.send(f"🔍 在 '{industry}' 中找不到符合條件的公司。")
             return
 
         header = f"🔗 **USCI 供應鏈: {industry}** (更新於 {gen_at.strftime('%Y-%m-%d')})\n"
         footer = "\n⚠️ 資料可能過期，請參考最新推文。" if is_stale else ""
-        
+
         # Build text with limit
         output_text = header
         count = 0
@@ -682,7 +609,7 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
                 break
             output_text += "\n" + res
             count += 1
-        
+
         output_text += footer
         await interaction.followup.send(output_text[:2000])
 
@@ -690,13 +617,48 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
         print(f"Error in /supply: {type(e).__name__}", file=sys.stderr)
         await interaction.followup.send("❌ 讀取 USCI 快取失敗。")
 
+def _render_chain_from_cache(industry_data: dict, ctx: str, cache_meta: dict) -> str:
+    """Render a supply-chain overview message from a USCI JSON cache entry.
+
+    Args:
+        industry_data: The industry-specific dict from the cache (contains 'tiers').
+        ctx: Uppercased industry context string used as the heading.
+        cache_meta: The top-level 'metadata' dict from the cache file.
+
+    Returns:
+        A Discord-formatted string (≤ 2000 chars) ready to send.
+    """
+    tiers_list = industry_data.get("tiers", [])
+    by_tier: dict = defaultdict(list)
+    for item in tiers_list:
+        by_tier[item.get("tier", 99)].append(item)
+    lines = [f"## 📊 {ctx} Supply Chain — 上中下游全景\n"]
+    for t_num in sorted(by_tier):
+        label = TIER_LABELS.get(t_num, f"Tier {t_num}")
+        companies = by_tier[t_num]
+        parts = []
+        for c in companies[:15]:
+            ticker = c.get("ticker") or ""
+            name = discord.utils.escape_markdown(c.get("name", ""))
+            tag = f"`${ticker}`" if ticker and TICKER_RE.match(ticker) else f"_{name}_"
+            parts.append(tag)
+        overflow = len(companies) - 15
+        line = f"**{label}** ({len(companies)})\n" + "  ".join(parts)
+        if overflow > 0:
+            line += f" _(+{overflow} more)_"
+        lines.append(line)
+    gen = cache_meta.get("generated_at", "")[:10]
+    lines.append(f"\n_資料來源: USCI Cache ({gen}) · 使用 `/supply company:NVDA` 查詢詳細_")
+    msg = "\n\n".join(lines)
+    if len(msg) > 1950:
+        msg = msg[:1947] + "…"
+    return msg
+
+
 @tree.command(name="chain", description="列出 CPO 供應鏈上中下游公司全景")
 @app_commands.describe(industry="產業語境 (預設 CPO)")
 async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
-    if not _is_allowed_interaction_guild(interaction):
-        await interaction.response.send_message("❌ 此伺服器不在允許清單中。", ephemeral=True)
-        return
-    remaining = _try_cooldown(interaction.user.id, _chain_cooldowns, _CHAIN_COOLDOWN_SECS)
+    remaining = await _try_cooldown(interaction.user.id, _chain_cooldowns, _CHAIN_COOLDOWN_SECS)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
@@ -752,34 +714,9 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
             with open(cache_path, encoding="utf-8") as _f:
                 _cache = json.load(_f)
             _inds = _cache.get("industries", {})
-            industry_data = _inds.get(ctx) or _inds.get(industry)
+            industry_data = _lookup_industry_cache(_inds, ctx) or _lookup_industry_cache(_inds, industry)
             if industry_data:
-                TIER_LABELS = {0: "🏢 終端客戶", 1: "⚙️ 直接供應商", 2: "🔄 二階供應商", 3: "🪨 原材料"}
-                tiers_list = industry_data.get("tiers", [])
-                from collections import defaultdict as _dd
-                by_tier: dict = _dd(list)
-                for item in tiers_list:
-                    by_tier[item.get("tier", 99)].append(item)
-                lines = [f"## 📊 {ctx} Supply Chain — 上中下游全景\n"]
-                for t_num in sorted(by_tier):
-                    label = TIER_LABELS.get(t_num, f"Tier {t_num}")
-                    companies = by_tier[t_num]
-                    parts = []
-                    for c in companies[:15]:
-                        ticker = c.get("ticker") or ""
-                        name = discord.utils.escape_markdown(c.get("name", ""))
-                        tag = f"`${ticker}`" if ticker and TICKER_RE.match(ticker) else f"_{name}_"
-                        parts.append(tag)
-                    overflow = len(companies) - 15
-                    line = f"**{label}** ({len(companies)})\n" + "  ".join(parts)
-                    if overflow > 0:
-                        line += f" _(+{overflow} more)_"
-                    lines.append(line)
-                gen = _cache.get("metadata", {}).get("generated_at", "")[:10]
-                lines.append(f"\n_資料來源: USCI Cache ({gen}) · 使用 `/supply company:NVDA` 查詢詳細_")
-                msg = "\n\n".join(lines)
-                if len(msg) > 1950:
-                    msg = msg[:1947] + "…"
+                msg = _render_chain_from_cache(industry_data, ctx, _cache.get("metadata", {}))
                 await interaction.followup.send(msg)
                 return
 
@@ -788,7 +725,6 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
             return
 
         # Group by role_category
-        from collections import defaultdict
         groups = defaultdict(list)
         seen = set()
         for r in rows:
@@ -911,10 +847,7 @@ async def account_toggle(interaction: discord.Interaction, action: str, name: st
 
 @tree.command(name="stats", description="顯示各帳號推文數量及最後抓取時間")
 async def stats(interaction: discord.Interaction):
-    if not _is_allowed_interaction_guild(interaction):
-        await interaction.response.send_message("❌ 此伺服器不在允許清單中。", ephemeral=True)
-        return
-    remaining = _try_cooldown(interaction.user.id, _stats_cooldowns, _STATS_COOLDOWN_SECS)
+    remaining = await _try_cooldown(interaction.user.id, _stats_cooldowns, _STATS_COOLDOWN_SECS)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
@@ -941,14 +874,8 @@ async def stats(interaction: discord.Interaction):
 @tree.command(name="summary", description="生成全標的情緒摘要報告")
 @app_commands.describe(days="要追蹤的天數 (預設 7, 上限 90)")
 async def summary(interaction: discord.Interaction, days: int = 7):
-    if not await _is_owner_user(interaction.user):
-        await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
-        return
     print(f"[bot] /summary called with days={days}")
-    if await _gemini_queue_saturated():
-        await interaction.response.send_message("⚠️ 系統忙碌中，請稍後再試。", ephemeral=True)
-        return
-    remaining = _try_cooldown(interaction.user.id)
+    remaining = await _try_cooldown(interaction.user.id)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
@@ -964,21 +891,22 @@ async def summary(interaction: discord.Interaction, days: int = 7):
         "--output", out_file,
     ]
 
-    try:
-        async with _gemini_job_slot():
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(SCRAPER_BASE),
-            )
-            try:
-                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-            except asyncio.TimeoutError:
-                proc.kill(); await proc.wait()
-                await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
-                return
-        if proc.returncode == 0 and os.path.exists(out_file):
+    async with _gemini_sem:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(SCRAPER_BASE),
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+        except asyncio.TimeoutError:
+            proc.kill(); await proc.wait()
+            await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
+            return
+
+    if proc.returncode == 0 and os.path.exists(out_file):
+        try:
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
             summary_text = res.get("summary", "")[:20000]
@@ -987,16 +915,16 @@ async def summary(interaction: discord.Interaction, days: int = 7):
                     await interaction.followup.send(summary_text[i : i + 1900])
             else:
                 await interaction.followup.send("分析失敗，請稍後再試。")
-        else:
-            if stderr:
-                print(f"Error in /summary: {stderr.decode(errors='replace')[:500]}")
-            await interaction.followup.send(f"最近 {days} 天無推文資料。")
-    except Exception as e:
-        print(f"Error reading /summary output: {e}")
-        await interaction.followup.send("分析失敗，請稍後再試。")
-    finally:
-        if os.path.exists(out_file):
-            os.unlink(out_file)
+        except Exception as e:
+            print(f"Error reading /summary output: {e}")
+            await interaction.followup.send("分析失敗，請稍後再試。")
+        finally:
+            if os.path.exists(out_file):
+                os.unlink(out_file)
+    else:
+        if stderr:
+            print(f"Error in /summary: {stderr.decode(errors='replace')[:500]}")
+        await interaction.followup.send(f"最近 {days} 天無推文資料。")
 
 
 @bot.event
@@ -1005,48 +933,43 @@ async def on_message(message):
         return
     await bot.process_commands(message)
     if message.content.startswith("$"):
-        if not _is_allowed_message_context(message):
-            return
         print(f"[bot] Message received in guild: {message.guild.name} ({message.guild.id})" if message.guild else "[bot] Message in DM")
         raw = message.content[1:].strip()
         ticker, days = parse_ticker_message(raw)
         if TICKER_RE.match(ticker):
-            if await _gemini_queue_saturated():
-                await message.channel.send("⚠️ 系統忙碌中，請稍後再試。")
-                return
-            remaining = _try_cooldown(message.author.id)
+            remaining = await _try_cooldown(message.author.id)
             if remaining > 0:
                 await message.channel.send(f"⏳ 請等 {remaining:.0f} 秒後再試。")
                 return
             safe_ticker = re.sub(r'[^A-Z0-9]', '_', ticker)
             _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_")
             os.close(_fd)
-            try:
-                cmd = [
-                    sys.executable,
-                    str(SCRAPER_BASE / "query_topic.py"),
-                    ticker,
-                    "--account", "all",
-                    "--days", str(days),
-                    "--output", out_file,
-                ]
+            cmd = [
+                sys.executable,
+                str(SCRAPER_BASE / "query_topic.py"),
+                ticker,
+                "--account", "all",
+                "--days", str(days),
+                "--output", out_file,
+            ]
 
-                async with message.channel.typing():
-                    async with _gemini_job_slot():
-                        proc = await asyncio.create_subprocess_exec(
-                            *cmd,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE,
-                            cwd=str(SCRAPER_BASE),
-                        )
-                        try:
-                            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-                        except asyncio.TimeoutError:
-                            proc.kill(); await proc.wait()
-                            await message.channel.send(f"⚠️ {ticker} 分析逾時 (>7m)，已中止。")
-                            return
+            async with message.channel.typing():
+                async with _gemini_sem:
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=str(SCRAPER_BASE),
+                    )
+                    try:
+                        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+                    except asyncio.TimeoutError:
+                        proc.kill(); await proc.wait()
+                        await message.channel.send(f"⚠️ {ticker} 分析逾時 (>7m)，已中止。")
+                        return
 
-                    if proc.returncode == 0 and os.path.exists(out_file):
+                if proc.returncode == 0 and os.path.exists(out_file):
+                    try:
                         with open(out_file, encoding="utf-8") as f:
                             res = json.load(f)
                         result_text = res.get("summary", "")[:20000]
@@ -1055,29 +978,23 @@ async def on_message(message):
                                 await message.channel.send(result_text[i : i + 1900])
                         else:
                             await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
-                    else:
-                        if stderr:
-                            logging.warning("Error analyzing %s: %s", ticker, stderr.decode(errors='replace')[:500])
+                    except Exception as e:
+                        print(f"Error reading {ticker} output: {e}")
                         await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
-            except Exception as e:
-                logging.warning("Error reading %s output: %s", ticker, e)
-                await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
-            finally:
-                if os.path.exists(out_file):
-                    os.unlink(out_file)
+                    finally:
+                        if os.path.exists(out_file):
+                            os.unlink(out_file)
+                else:
+                    if stderr:
+                        print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')[:500]}")
+                    await message.channel.send(f"找不到關於 {ticker} 的推文或分析失敗。")
 
 
 
 @tree.command(name="analyze", description="分析特定標的的觀點趨勢")
 @app_commands.describe(symbol="標的名稱 (如 TSLA, BTC)", days="追蹤天數 (預設 30, 上限 90)")
 async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30):
-    if not await _is_owner_user(interaction.user):
-        await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
-        return
-    if await _gemini_queue_saturated():
-        await interaction.response.send_message("⚠️ 系統忙碌中，請稍後再試。", ephemeral=True)
-        return
-    remaining = _try_cooldown(interaction.user.id)
+    remaining = await _try_cooldown(interaction.user.id)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
@@ -1100,21 +1017,22 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         "--output", out_file,
     ]
 
-    try:
-        async with _gemini_job_slot():
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(SCRAPER_BASE),
-            )
-            try:
-                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
-            except asyncio.TimeoutError:
-                proc.kill(); await proc.wait()
-                await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
-                return
-        if proc.returncode == 0 and os.path.exists(out_file):
+    async with _gemini_sem:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(SCRAPER_BASE),
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=420)
+        except asyncio.TimeoutError:
+            proc.kill(); await proc.wait()
+            await interaction.followup.send("⚠️ 分析逾時 (>7m)，已中止。")
+            return
+
+    if proc.returncode == 0 and os.path.exists(out_file):
+        try:
             with open(out_file, encoding="utf-8") as f:
                 res = json.load(f)
             result_text = res.get("summary", "")[:20000]
@@ -1123,83 +1041,18 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
                     await interaction.followup.send(result_text[i : i + 1900])
             else:
                 await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
-        else:
-            if stderr:
-                print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')[:500]}")
+        except Exception as e:
+            print(f"Error reading /analyze output: {e}")
             await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
-    except Exception as e:
-        print(f"Error reading /analyze output: {e}")
+        finally:
+            if os.path.exists(out_file):
+                os.unlink(out_file)
+    else:
+        if stderr:
+            print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')[:500]}")
         await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
-    finally:
-        if os.path.exists(out_file):
-            os.unlink(out_file)
 
 
-@tree.command(name="llm", description="摘要任意 URL 的內文，支援 X/Twitter 推文與一般網頁")
-@app_commands.describe(url="要摘要的網址（例如：https://x.com/user/status/123 或任意文章 URL）")
-async def llm_summarize(interaction: discord.Interaction, url: str):
-    if not await _is_owner_user(interaction.user):
-        await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
-        return
-    if await _gemini_queue_saturated():
-        await interaction.response.send_message("⚠️ 系統忙碌中，請稍後再試。", ephemeral=True)
-        return
-    remaining = _try_cooldown(interaction.user.id, _llm_cooldowns, _LLM_COOLDOWN_SECS)
-    if remaining > 0:
-        await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
-        return
-    url = url.strip()
-    if not _URL_SCHEME_RE.match(url):
-        await interaction.response.send_message(
-            "⚠️ 請提供完整網址（以 http:// 或 https:// 開頭）。", ephemeral=True
-        )
-        return
-    if len(url) > 2048:
-        await interaction.response.send_message("⚠️ URL 過長（超過 2048 字元）。", ephemeral=True)
-        return
-    await interaction.response.defer(thinking=True)
-    _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_llm_")
-    os.close(_fd)
-    try:
-        cmd = [sys.executable, str(SCRAPER_BASE / "llm_url.py"), "--url", url, "--output", out_file]
-        async with _gemini_job_slot():
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(SCRAPER_BASE),
-            )
-            try:
-                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-                await interaction.followup.send("⚠️ 摘要逾時 (>3m)，已中止。")
-                return
-        if os.path.exists(out_file):
-            with open(out_file, encoding="utf-8") as f:
-                res = json.load(f)
-            summary = res.get("summary", "")[:8000]
-            if summary:
-                safe_display_url = discord.utils.escape_markdown(url[:80])
-                header = f"🔗 **摘要 — {safe_display_url}{'…' if len(url) > 80 else ''}**\n"
-                for i in range(0, len(summary), 1900):
-                    await interaction.followup.send((header if i == 0 else "") + summary[i : i + 1900])
-            else:
-                err_msg = res.get("error", "摘要失敗")
-                if stderr:
-                    logging.warning("[llm] %s", stderr.decode(errors="replace")[:300])
-                await interaction.followup.send(f"⚠️ {err_msg}")
-        else:
-            if stderr:
-                logging.warning("[llm] %s", stderr.decode(errors="replace")[:300])
-            await interaction.followup.send("⚠️ 無法取得摘要，請確認網址是否可存取。")
-    except Exception as e:
-        logging.warning("[llm] read output error: %s", e)
-        await interaction.followup.send("⚠️ 內部錯誤，請查看日誌。")
-    finally:
-        if os.path.exists(out_file):
-            os.unlink(out_file)
 
 
 @tree.command(name="pausex", description="暫停 X-Tracker 輪詢並釋放 Chrome 資源")
@@ -1207,21 +1060,20 @@ async def pausex(interaction: discord.Interaction):
     if not await bot.is_owner(interaction.user):
         await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
         return
-    remaining = _try_cooldown(interaction.user.id, _pause_cooldowns, _PAUSE_COOLDOWN_SECS)
+    remaining = await _try_cooldown(interaction.user.id, _pause_cooldowns, _PAUSE_COOLDOWN_SECS)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
     await interaction.response.defer(thinking=True)
     # 1. 停止所有監控進程
     for script in ("monitor_active.py", "monitor_rss.py"):
-        p = await asyncio.create_subprocess_exec("pkill", "-f", str(SCRAPER_BASE / script))
+        p = await asyncio.create_subprocess_exec("pkill", "-f", script)
         try:
             await asyncio.wait_for(p.wait(), timeout=5)
         except asyncio.TimeoutError:
             pass
-    # 2. 強制關閉 Chrome (匹配完整 user-data-dir 路徑，避免誤殺其他進程)
-    chrome_profile = str(SCRAPER_BASE / ".profiles" / "x_scraper")
-    p3 = await asyncio.create_subprocess_exec("pkill", "-f", chrome_profile)
+    # 2. 強制關閉 Chrome (帶有特定 profile)
+    p3 = await asyncio.create_subprocess_exec("pkill", "-f", "Google Chrome.*x_scraper")
     try:
         await asyncio.wait_for(p3.wait(), timeout=5)
     except asyncio.TimeoutError:
@@ -1235,14 +1087,14 @@ async def resumex(interaction: discord.Interaction):
     if not await bot.is_owner(interaction.user):
         await interaction.response.send_message("❌ 僅限 Bot 擁有者使用。", ephemeral=True)
         return
-    remaining = _try_cooldown(interaction.user.id, _pause_cooldowns, _PAUSE_COOLDOWN_SECS)
+    remaining = await _try_cooldown(interaction.user.id, _pause_cooldowns, _PAUSE_COOLDOWN_SECS)
     if remaining > 0:
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
     await interaction.response.defer(thinking=True)
     # 0. 先清理舊的監控進程，確保冪等性
     for script in ("monitor_active.py", "monitor_rss.py"):
-        p = await asyncio.create_subprocess_exec("pkill", "-f", str(SCRAPER_BASE / script))
+        p = await asyncio.create_subprocess_exec("pkill", "-f", script)
         try:
             await asyncio.wait_for(p.wait(), timeout=5)
         except asyncio.TimeoutError:
@@ -1258,7 +1110,7 @@ async def resumex(interaction: discord.Interaction):
             p_restart.kill()
 
     # 2. 啟動監控進程 (使用 venv python)，以 start_new_session 脫離當前進程組
-    venv_python = sys.executable
+    venv_python = SCRAPER_BASE / "venv" / "bin" / "python"
     active_script = SCRAPER_BASE / "monitor_active.py"
     rss_script = SCRAPER_BASE / "monitor_rss.py"
 

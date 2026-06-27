@@ -8,6 +8,7 @@ python-dotenv
 pyyaml
 discord.py>=2.3,<3
 pytest
+pytest-asyncio
 playwright
 feedparser
 networkx

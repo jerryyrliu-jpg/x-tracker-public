@@ -22,7 +22,7 @@ def test_edgar_found_10k(monkeypatch):
         }
     }
     monkeypatch.setattr("requests.get", lambda *args, **kwargs: MockResponse(mock_data))
-    
+
     hits = fetcher.search_relation("NVIDIA", "TSMC")
     assert len(hits) == 1
     assert hits[0]["form_type"] == "10-K"
@@ -40,7 +40,7 @@ def test_edgar_found_multiple(monkeypatch):
         }
     }
     monkeypatch.setattr("requests.get", lambda *args, **kwargs: MockResponse(mock_data))
-    
+
     hits = fetcher.search_relation("A", "B")
     assert len(hits) == 3
     assert fetcher.calc_edgar_score(hits) == 0.30
@@ -49,7 +49,7 @@ def test_edgar_no_result(monkeypatch):
     fetcher = EdgarFetcher()
     mock_data = {"hits": {"hits": []}}
     monkeypatch.setattr("requests.get", lambda *args, **kwargs: MockResponse(mock_data))
-    
+
     hits = fetcher.search_relation("X", "Y")
     assert len(hits) == 0
     assert fetcher.calc_edgar_score(hits) == 0.0
@@ -57,17 +57,17 @@ def test_edgar_no_result(monkeypatch):
 def test_edgar_429_retry(monkeypatch):
     fetcher = EdgarFetcher()
     call_count = 0
-    
+
     def mock_get(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return MockResponse({}, 429)
         return MockResponse({"hits": {"hits": []}}, 200)
-        
+
     monkeypatch.setattr("requests.get", mock_get)
     monkeypatch.setattr("time.sleep", lambda x: None) # skip sleep
-    
+
     hits = fetcher.search_relation("A", "B")
     assert call_count == 2
     assert len(hits) == 0

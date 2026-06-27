@@ -76,7 +76,7 @@ async def human_like_scroll(page):
 
 async def scrape():
     result = {"status": "error", "new_count": 0, "message": "", "timestamp": datetime.now().isoformat()}
-    
+
     async with async_playwright() as p:
         try:
             # 連線至現有的 CDP 瀏覽器
@@ -84,15 +84,15 @@ async def scrape():
             # 優先使用現有的 context
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
             page = await context.new_page()
-            
+
             # 設定資源攔截
             await page.route("**/*", intercept_route)
-            
+
             # 導航至帳號頁面
             await asyncio.sleep(random.uniform(1.0, 3.0))
             url = f"https://x.com/{ACCOUNT}"
             await page.goto(url, wait_until="load", timeout=60000)
-            
+
             # 使用 data-testid 定位推文
             try:
                 await page.wait_for_selector("article[data-testid='tweet']", timeout=30000)
@@ -102,11 +102,11 @@ async def scrape():
                 print(json.dumps(result))
                 await page.close()
                 sys.exit(2)
-            
+
             # 執行隨機滾動
             await human_like_scroll(page)
             await asyncio.sleep(random.uniform(1.0, 2.0))
-            
+
             articles = await page.query_selector_all("article[data-testid='tweet']")
 
             conn = get_db_conn(DB_PATH)
@@ -150,10 +150,10 @@ async def scrape():
             result["status"] = "success"
             result["new_count"] = new_count
             await page.close()
-            
+
         except Exception as e:
             result["message"] = str(e)
-        
+
         print(json.dumps(result))
         if result["status"] == "success":
             sys.exit(0)

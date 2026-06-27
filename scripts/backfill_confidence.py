@@ -46,7 +46,7 @@ def main():
     print(f"  Errors:   {result['errors']}")
     print(f"  Last id:  {result['last_id']}  (use --offset {result['last_id']} to resume)")
     print(f"  Time:     {duration:.2f}s")
-    
+
     if not args.dry_run and result['updated'] > 0:
         print("\nUpdating USCI cache...")
         from cpo_chain.export_universal import export_all

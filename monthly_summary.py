@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import yaml
 from utils import load_account_config, send_discord
+from llm_client import run_text_prompt
 
 _ISOLATION_TAGS = re.compile(r'</?(?:TWEET_DATA|NEWS_DATA)>', re.IGNORECASE)
 
@@ -52,25 +53,7 @@ def generate_summary(account_cfg: dict, tweets_text: str):
         "- 若推文中無特定方向，請標註為中性或觀察。\n"
         "- Discord 訊息上限為 2000 字元。\n"
     )
-    try:
-        result = subprocess.run(
-            ["gemini", "--model", _GEMINI_MODEL],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            timeout=420,
-        )
-        if result.returncode != 0:
-            print(f"Gemini error: {result.stderr[:500]}")
-            return None
-        return result.stdout
-    except subprocess.TimeoutExpired:
-        print("Gemini call timed out (>420s)")
-        return None
-    except Exception as e:
-        print(f"Error calling gemini: {e}")
-        return None
+    return run_text_prompt(prompt, timeout=420, backend="auto", gemini_model=_GEMINI_MODEL) or None
 
 
 async def main():

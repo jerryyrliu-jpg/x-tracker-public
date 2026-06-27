@@ -3,7 +3,7 @@ import sqlite3
 import json
 import logging
 import re
-import subprocess
+from llm_client import run_text_prompt
 from .entity_resolver import EntityResolver
 from .company_ticker_mapper import CompanyTickerMapper
 
@@ -37,20 +37,15 @@ class NewsExtractor:
         self.resolver = EntityResolver(db_path, keywords_path)
 
     def extract_from_article(self, article: dict) -> list[dict]:
-        """Call gemini CLI to extract relations. Raises on error."""
+        """Call the configured LLM backend to extract relations. Raises on error."""
         raw = f"{article['title'][:300]}. {article.get('summary', '')[:280]}"
         text = _ISOLATION_TAGS.sub('', raw)
         prompt = _EXTRACTION_PROMPT_PREFIX + text + "\n</NEWS_DATA>"
         _gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
-        result = subprocess.run(
-            ["gemini", "--model", _gemini_model],
-            input=prompt,
-            capture_output=True, text=True, encoding="utf-8",
-            timeout=120,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"gemini CLI error: {result.stderr[:200]}")
-        match = re.search(r'(\{.*\})', result.stdout, re.DOTALL)
+        output = run_text_prompt(prompt, timeout=120, backend="auto", gemini_model=_gemini_model)
+        if not output:
+            raise RuntimeError("LLM extraction returned empty output")
+        match = re.search(r'(\{.*\})', output, re.DOTALL)
         if not match:
             return []
         data = json.loads(match.group(1))
@@ -94,15 +89,18 @@ class NewsExtractor:
                         from_id, _, _ = self.resolver.resolve(conn, supplier)
                         to_id, _, _ = self.resolver.resolve(conn, customer)
 
+                        if from_id == to_id:
+                            continue
+
                         conn.execute("""
                             INSERT OR IGNORE INTO industry_relations
                             (from_company_id, to_company_id, role, role_category,
                              base_score, confidence, industry_context)
                             VALUES (?, ?, ?, 'upstream', ?, ?, ?)
                         """, (from_id, to_id,
-                              rel.get("role", "supplier"),
+                              (rel.get("role") or "supplier")[:200],
                               base_score, base_score,
-                              rel.get("industry_context", "Other")))
+                              (rel.get("industry_context") or "Other")[:100]))
 
                         if conn.execute("SELECT changes()").fetchone()[0]:
                             rel_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -112,7 +110,12 @@ class NewsExtractor:
                             row = conn.execute("""
                                 SELECT id FROM industry_relations
                                 WHERE from_company_id=? AND to_company_id=? AND role=? AND industry_context=?
-                            """, (from_id, to_id, rel.get("role", "supplier"), rel.get("industry_context", "Other"))).fetchone()
+                            """, (
+                                from_id,
+                                to_id,
+                                (rel.get("role") or "supplier")[:200],
+                                (rel.get("industry_context") or "Other")[:100],
+                            )).fetchone()
                             rel_id = row[0] if row else None
                             skipped += 1
 

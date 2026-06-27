@@ -38,7 +38,7 @@ class EntityResolver:
                 detail_resp = requests.get(detail_url, timeout=5)
                 details = detail_resp.json().get("entities", {}).get(entity_id, {})
                 claims = details.get("claims", {})
-                
+
                 ticker = None
                 if "P249" in claims:
                     raw_ticker = claims["P249"][0]["mainsnak"]["datavalue"]["value"]
@@ -50,18 +50,18 @@ class EntityResolver:
         except Exception as e:
             print(f"Wikidata API Error: {type(e).__name__}")
         return {}
-        
+
     def resolve(self, conn: sqlite3.Connection, raw_name: str) -> tuple[int, str, str]:
         """
         Resolve raw_name to (company_id, standardized_name, status).
         """
         name = raw_name.strip()[:_MAX_ENTITY_NAME_LEN]
-        
+
         # 1. Check Static Seed Dictionary
         for standard_name, aliases in self.seed_aliases.items():
             if name.upper() == standard_name.upper() or name.upper() in [a.upper() for a in aliases]:
                 res = conn.execute("SELECT id, name FROM industry_entities WHERE name = ?", (standard_name,)).fetchone()
-                
+
                 ticker = None
                 all_possible = [standard_name] + aliases
                 for a in all_possible:
@@ -81,7 +81,7 @@ class EntityResolver:
                 else:
                     cursor = conn.execute("INSERT INTO industry_entities (name, ticker) VALUES (?, ?)", (standard_name, ticker))
                     company_id = cursor.lastrowid
-                
+
                 for alias in ([standard_name] + aliases):
                     conn.execute("INSERT OR IGNORE INTO industry_entity_aliases (alias, company_id, status) VALUES (?, ?, ?)", (alias, company_id, 'active'))
                     if self._db_cache is not None and alias not in self._db_cache:
@@ -91,8 +91,8 @@ class EntityResolver:
 
         # 2. Check Database Aliases (Exact Match)
         res = conn.execute("""
-            SELECT c.id, c.name FROM industry_entities c 
-            JOIN industry_entity_aliases a ON c.id = a.company_id 
+            SELECT c.id, c.name FROM industry_entities c
+            JOIN industry_entity_aliases a ON c.id = a.company_id
             WHERE a.alias = ? OR c.name = ?
         """, (name, name)).fetchone()
         if res:
@@ -103,13 +103,13 @@ class EntityResolver:
             aliases = [row[0] for row in conn.execute("SELECT alias FROM industry_entity_aliases").fetchall()]
             names = [row[0] for row in conn.execute("SELECT name FROM industry_entities").fetchall()]
             self._db_cache = list(set(aliases + names))
-        
+
         matches = difflib.get_close_matches(name, self._db_cache, n=1, cutoff=0.8)
         if matches:
             matched_name = matches[0]
             res = conn.execute("""
-                SELECT c.id, c.name FROM industry_entities c 
-                LEFT JOIN industry_entity_aliases a ON c.id = a.company_id 
+                SELECT c.id, c.name FROM industry_entities c
+                LEFT JOIN industry_entity_aliases a ON c.id = a.company_id
                 WHERE a.alias = ? OR c.name = ?
             """, (matched_name, matched_name)).fetchone()
             if res:
@@ -118,7 +118,7 @@ class EntityResolver:
         # 4. Wikidata Fallback for New Entities
         wiki_info = self._query_wikidata(name)
         ticker = wiki_info.get("ticker")
-        
+
         cursor = conn.execute("INSERT INTO industry_entities (name, ticker) VALUES (?, ?)", (name, ticker))
         new_id = cursor.lastrowid
         if self._db_cache is not None:

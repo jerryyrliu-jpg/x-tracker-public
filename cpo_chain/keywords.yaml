@@ -2,6 +2,8 @@ keywords:
 - CPO
 - 共封裝
 - co-packaged
+- Nokia
+- NOK
 - silicon photonics
 - silicon photon
 - 矽光子
@@ -30,6 +32,7 @@ root_tickers:
 - META
 - MSFT
 - INTC
+- NOK
 seed_aliases:
   Broadcom:
   - AVGO
@@ -48,3 +51,7 @@ seed_aliases:
   - 台積電
   - '2330'
   - Taiwan Semi
+  Nokia:
+  - NOK
+  - NOKBF
+  - 諾基亞

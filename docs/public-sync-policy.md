@@ -1,0 +1,147 @@
+# Public Sync Policy
+
+This document defines what may be published from the private `x-tracker` repository to `x-tracker-public`.
+
+## Allowed Content
+- `.gitignore`
+- `README.md`
+- `config.env.example`
+- `accounts.example.yaml`
+- `requirements.txt`
+- `pytest.ini`
+- `conftest.py`
+- `dashboard.py`
+- `discord_bot.py`
+- `graph_builder.py`
+- `llm_client.py`
+- `monitor_active.py`
+- `monitor_rss.py`
+- `monthly_summary.py`
+- `query_topic.py`
+- `scraper.py`
+- `scraper_playwright.py`
+- `utils.py`
+- `scripts/backfill_confidence.py`
+- `scripts/fix_cpo_tickers.py`
+- `scripts/import_cpo_chain.py`
+- `scripts/migrate_v2.py`
+- `scripts/prepare_public_sync.py`
+- `scripts/restart_chrome.sh`
+- `scripts/run_news_discovery.py`
+- `scripts/update_network_html.py`
+- `cpo_chain/__init__.py`
+- `cpo_chain/batch_embed.py`
+- `cpo_chain/company_ticker_mapper.py`
+- `cpo_chain/confidence_updater.py`
+- `cpo_chain/db.py`
+- `cpo_chain/edgar_fetcher.py`
+- `cpo_chain/embedder.py`
+- `cpo_chain/entity_resolver.py`
+- `cpo_chain/export_universal.py`
+- `cpo_chain/extract_universal.py`
+- `cpo_chain/keywords.yaml`
+- `cpo_chain/news_article_fetcher.py`
+- `cpo_chain/news_extractor.py`
+- `cpo_chain/news_fetcher.py`
+- `cpo_chain/prompts.py`
+- `cpo_chain/vec_db.py`
+- `docs/public-sync-policy.md`
+- `docs/public-release-checklist.md`
+- `scripts/check_public_sync.py`
+- `tests/__init__.py`
+- `tests/repro_supply_bug.py`
+- `tests/test_cache_key.py`
+- `tests/test_confidence_updater.py`
+- `tests/test_db.py`
+- `tests/test_discord_bot.py`
+- `tests/test_edgar_fetcher.py`
+- `tests/test_export_universal.py`
+- `tests/test_extract_universal.py`
+- `tests/test_llm_client.py`
+- `tests/test_news_article_fetcher.py`
+- `tests/test_news_extractor.py`
+- `tests/test_news_fetcher.py`
+- `tests/test_paths.py`
+- `tests/test_prepare_public_sync.py`
+- `tests/test_prompt.py`
+- `tests/test_slash_commands.py`
+- `tests/test_summary.py`
+- `tests/test_update_network_html.py`
+- `tests/test_utils.py`
+- `tests/test_check_public_sync.py`
+- `lib/bindings/utils.js`
+- `lib/tom-select/tom-select.complete.min.js`
+- `lib/tom-select/tom-select.css`
+- `lib/vis-9.1.2/vis-network.css`
+- `lib/vis-9.1.2/vis-network.min.js`
+- No other files are allowed unless their exact path is added to this list in a tracked commit
+
+## Sanitized Content
+- `accounts.yaml` must be replaced with `accounts.example.yaml`
+- README, docs, and example files must pass these checks:
+  - no real account names
+  - no webhook values or API key values
+  - no personal email addresses beyond placeholders
+  - no machine-specific absolute paths
+  - no internal codenames
+  - no local runtime timestamps or state snapshots
+- Replace sensitive or private text with public-safe placeholders or remove it
+- Keep examples generic and runnable without private credentials or local state
+
+## Forbidden Content
+- `.env`
+- `accounts.yaml`
+- `*.db`
+- `*.db.bak.*`
+- `logs/`
+- `*.log`
+- `cpo_chain/output/`
+- `cpo_chain/output/**`
+- `__pycache__/**`
+- `*.pyc`
+- `*.pyo`
+- `.pytest_cache/**`
+- `.mypy_cache/**`
+- `.ruff_cache/**`
+- `.profiles/`
+- `.gemini/`
+- `.superpowers/`
+- `.worktrees/`
+- `venv/`
+- `.last_guid`
+- `.last_monthly_summary`
+- `graph.html`
+- `temp_acc.txt`
+- `metrics.json`
+- `*.lock`
+- `package-lock.json`
+- `poetry.lock`
+- `pnpm-lock.yaml`
+- `yarn.lock`
+- `node_modules/**`
+- any machine-generated cache directories or files not explicitly allowlisted
+- Any local tool state, cache, or workspace metadata not explicitly allowlisted
+
+## Publication Rule
+- Unknown files default to excluded
+- Sanitized files must be replaced by `accounts.example.yaml` or another exact path already listed in this allowlist
+- Public sync must pass the preflight checks below before any publication step
+
+## Preflight Assertions
+- Candidate manifest generation:
+  - Run `python3 scripts/prepare_public_sync.py --write-manifest /tmp/xtracker-public-manifest.txt`
+  - Review the `Blocked candidate paths` section as an internal-only warning list
+  - The manifest file is the publication candidate set; only manifest paths may move to the public repository
+- Prohibited-content grep for docs/examples:
+  - Run `rg -n --hidden --glob 'README.md' --glob 'config.env.example' --glob 'accounts.example.yaml' --glob 'docs/**/*.md' '(webhook|api[_-]?key|sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[0-9A-Za-z-]+|AKIA[0-9A-Z]{16}|@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}|/Users/|/private/|/home/|\\b20\\d\\d-\\d\\d-\\d\\dT)'`
+  - Must return no matches; any output blocks publication
+- Manifest validation:
+  - Run `python3 scripts/check_public_sync.py --paths-file /tmp/xtracker-public-manifest.txt`
+  - Must return `allowed: N`, `review: 0`, and `forbidden: 0`
+  - Must return no diff-check errors for the manifest candidate set
+- Diff basis:
+  - Public-sync tooling compares against `git merge-base public/main HEAD`, then evaluates the current working tree from that merge base
+  - This keeps local uncommitted sanitization fixes visible to the preflight gate
+- Approval gate:
+  - The manifest candidate publication path list must be a strict subset of the exact allowlist above; any path outside the allowlist blocks publication
+  - Publication is blocked until the repo owner explicitly approves that exact manifest path list in the current review step or thread, and that approval is required before push

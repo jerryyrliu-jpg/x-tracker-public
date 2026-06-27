@@ -8,12 +8,12 @@ import yaml
 import argparse
 import subprocess
 import re
+import importlib
 from datetime import datetime
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 import pydantic
-import sqlite_vec
 
 # Setup paths
 CPO_CHAIN_DIR = Path(__file__).resolve().parent
@@ -25,15 +25,16 @@ load_dotenv(BASE_DIR / ".env")
 
 try:
     from . import db as usci_db
-    from . import vec_db
-    from .embedder import UniversalEmbedder
 except ImportError:
     import db as usci_db
-    import vec_db
-    from embedder import UniversalEmbedder
 
-from entity_resolver import EntityResolver
-import prompts
+try:
+    from .entity_resolver import EntityResolver
+    from . import prompts
+except ImportError:
+    from entity_resolver import EntityResolver
+    import prompts
+from llm_client import run_text_prompt
 
 try:
     from utils import get_db_conn, setup_logger, send_discord
@@ -59,6 +60,23 @@ class RelationItem(pydantic.BaseModel):
 _ISOLATION_RE = re.compile(r'</?(?:TWEET_DATA|NEWS_DATA)>', re.IGNORECASE)
 
 
+def load_sqlite_vec():
+    try:
+        return importlib.import_module("sqlite_vec")
+    except ModuleNotFoundError:
+        return None
+
+
+def load_vector_dependencies():
+    try:
+        vec_db_mod = importlib.import_module("cpo_chain.vec_db")
+        embedder_mod = importlib.import_module("cpo_chain.embedder")
+    except ModuleNotFoundError:
+        vec_db_mod = importlib.import_module("vec_db")
+        embedder_mod = importlib.import_module("embedder")
+    return vec_db_mod, embedder_mod.UniversalEmbedder
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def call_gemini(tweets_batch: list[dict]) -> list[dict]:
     """Call Gemini via CLI and extract JSON relations."""
@@ -66,23 +84,15 @@ async def call_gemini(tweets_batch: list[dict]) -> list[dict]:
     content = json.dumps(safe_batch, ensure_ascii=False)
     prompt = f"{prompts.SYSTEM_INSTRUCTION}\n\n{prompts.build_universal_extraction_prompt(content)}"
 
-    _gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
     try:
-        # Use subprocess to call gemini CLI
-        result = subprocess.run(
-            ['gemini', '--model', _gemini_model],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
+        output = run_text_prompt(
+            prompt,
             timeout=120,
+            backend="auto",
+            gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
         )
-
-        if result.returncode != 0:
-            logger.error(f"Gemini CLI Error: {result.stderr}")
-            raise Exception(f"CLI execution failed with code {result.returncode}")
-
-        output = result.stdout
+        if not output:
+            raise ValueError("No output returned from LLM backend")
         # Extract JSON block using regex
         match = re.search(r'(\{.*\})', output, re.DOTALL)
         if not match:
@@ -96,19 +106,24 @@ async def call_gemini(tweets_batch: list[dict]) -> list[dict]:
         logger.error(f"call_gemini Error: {e}")
         raise
 
-async def process_batch(batch_tweets, resolver, conn, new_review_entities, dry_run=False):
-    """Process batch of tweets for universal supply chain extraction."""
+async def process_batch(batch_tweets, resolver, conn, dry_run=False):
+    """Process batch of tweets for universal supply chain extraction.
+
+    Returns a list of entity names that need review.
+    """
+    collected_review_entities = []
     try:
         relations = await call_gemini(batch_tweets)
     except Exception as e:
         logger.error(f"Batch failed: {e}")
         if len(batch_tweets) > 1:
             for t in batch_tweets:
-                await process_batch([t], resolver, conn, new_review_entities, dry_run)
-        return
+                sub_entities = await process_batch([t], resolver, conn, dry_run)
+                collected_review_entities.extend(sub_entities)
+        return collected_review_entities
 
     if not relations:
-        return
+        return collected_review_entities
 
     to_save = []
     unique_rels = set()
@@ -117,16 +132,24 @@ async def process_batch(batch_tweets, resolver, conn, new_review_entities, dry_r
     for rel in relations:
         if rel.get("confidence", 0) < 0.6:
             continue
-            
+
         role_cat = rel.get("role_category")
-        if role_cat not in ['upstream', 'midstream', 'downstream', 'equipment', 'material']:
+        if role_cat not in {'upstream', 'midstream', 'downstream', 'equipment', 'material'}:
             continue
 
-        f_name_raw = rel.get("from_entity")
-        t_name_raw = rel.get("to_entity")
-        role = rel.get("role")
-        context = rel.get("industry_context", "CPO")
-        
+        evidence_type = rel.get("evidence_type") if rel.get("evidence_type") in {"support", "refute"} else "support"
+        rel = {**rel, "evidence_type": evidence_type}
+
+        try:
+            validated = RelationItem(**rel)
+        except Exception:
+            continue
+
+        f_name_raw = validated.from_entity
+        t_name_raw = validated.to_entity
+        role = validated.role
+        context = validated.industry_context or "CPO"
+
         rel_key = (f_name_raw, t_name_raw, role, context)
         if rel_key in unique_rels:
             continue
@@ -135,20 +158,20 @@ async def process_batch(batch_tweets, resolver, conn, new_review_entities, dry_r
         try:
             f_id, f_name, f_status = resolver.resolve(conn, f_name_raw)
             t_id, t_name, t_status = resolver.resolve(conn, t_name_raw)
-            
-            if f_status == 'needs_review': new_review_entities.append(f_name)
-            if t_status == 'needs_review': new_review_entities.append(t_name)
-            
+
+            if f_status == 'needs_review': collected_review_entities.append(f_name)
+            if t_status == 'needs_review': collected_review_entities.append(t_name)
+
             if f_id == t_id: continue
-            
+
             to_save.append({
                 "from_id": f_id,
                 "to_id": t_id,
                 "role": role,
                 "role_category": role_cat,
                 "industry_context": context,
-                "evidence_type": rel.get("evidence_type", "support"),
-                "confidence_reason": rel.get("confidence_reason"),
+                "evidence_type": validated.evidence_type,
+                "confidence_reason": validated.confidence_reason,
                 "tweet_ids": list(tweet_map.keys()),
                 "snippets": [tweet_map[tid] for tid in tweet_map]
             })
@@ -162,16 +185,16 @@ async def process_batch(batch_tweets, resolver, conn, new_review_entities, dry_r
                 for item in to_save:
                     score_delta = 1 if item["evidence_type"] == "support" else -1
                     conn.execute("""
-                        INSERT INTO industry_relations 
+                        INSERT INTO industry_relations
                         (from_company_id, to_company_id, role, role_category, industry_context, evidence_score, confidence_reason, base_score, confidence)
                         VALUES (?, ?, ?, ?, ?, ?, ?, 0.5, 0.5)
                         ON CONFLICT(from_company_id, to_company_id, role, industry_context) DO UPDATE SET
                             evidence_score = evidence_score + EXCLUDED.evidence_score,
                             last_confirmed = datetime('now')
-                    """, (item["from_id"], item["to_id"], item["role"], item["role_category"], item["industry_context"], score_delta, item["confidence_reason"]))
-                    
+                    """, (item["from_id"], item["to_id"], (item["role"] or '')[:100], (item["role_category"] or '')[:50], (item["industry_context"] or '')[:100], score_delta, (item["confidence_reason"] or '')[:500]))
+
                     cursor = conn.execute("""
-                        SELECT id FROM industry_relations 
+                        SELECT id FROM industry_relations
                         WHERE from_company_id = ? AND to_company_id = ? AND role = ? AND industry_context = ?
                     """, (item["from_id"], item["to_id"], item["role"], item["industry_context"]))
                     row = cursor.fetchone()
@@ -185,11 +208,14 @@ async def process_batch(batch_tweets, resolver, conn, new_review_entities, dry_r
         except Exception as e:
             logger.error(f"DB Error: {e}")
 
+    return collected_review_entities
+
 async def main():
     parser = argparse.ArgumentParser(description="Extract Universal Supply Chain relations")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--vector", action="store_true", help="Use vector search for recall")
+    parser.add_argument("--all-tweets", action="store_true", help="Process all unprocessed tweets regardless of keyword match")
     parser.add_argument("--query", type=str, default="Supply chain transactions, assembly, packaging, and raw material relationships for AI, CPO, HBM, Liquid Cooling.")
     args = parser.parse_args()
 
@@ -198,17 +224,21 @@ async def main():
     resolver = EntityResolver(DB_PATH, KEYWORDS_PATH)
 
     tweets = []
-    
+
     # Stage 1: Recall
     if args.vector:
         logger.info("Using vector search for recall...")
+        vec_db, UniversalEmbedder = load_vector_dependencies()
         embedder = UniversalEmbedder()
         query_vec = embedder.embed_query(args.query)
-        
-        # Load sqlite-vec
+
+        sqlite_vec = load_sqlite_vec()
+        if sqlite_vec is None:
+            raise RuntimeError("sqlite_vec is required for --vector mode but is not installed")
+
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
-        
+
         # Query vector index
         query = """
         SELECT t.id, t.text
@@ -219,15 +249,26 @@ async def main():
         LIMIT ?
         """
         tweets = conn.execute(query, (vec_db.serialize_float_list(query_vec), args.limit)).fetchall()
+    elif args.all_tweets:
+        # All-tweets mode: process every unprocessed tweet, no keyword filter
+        logger.info("Using all-tweets mode (no keyword filter)...")
+        query = """
+        SELECT t.id, t.text
+        FROM tweets t
+        WHERE t.id NOT IN (SELECT tweet_id FROM industry_extract_log)
+        ORDER BY t.created_at DESC
+        LIMIT ?
+        """
+        tweets = conn.execute(query, (args.limit,)).fetchall()
     else:
         # Keyword Recall (Fallback to keywords.yaml if no vector search requested)
         logger.info("Using keyword search for recall...")
         with open(KEYWORDS_PATH, "r", encoding="utf-8") as f:
             keywords = yaml.safe_load(f).get("keywords", [])
-        
+
         fts_query = " OR ".join([f'"{k}"' for k in keywords])
         query = """
-        SELECT t.id, t.text 
+        SELECT t.id, t.text
         FROM tweets t
         JOIN tweets_fts f ON t.rowid = f.rowid
         WHERE t.id NOT IN (SELECT tweet_id FROM industry_extract_log)
@@ -238,12 +279,13 @@ async def main():
 
     logger.info(f"Found {len(tweets)} tweets to process.")
     new_review_entities = []
-    
+
     batch_size = 5
     for i in range(0, len(tweets), batch_size):
         batch = [{"id": r[0], "text": r[1]} for r in tweets[i:i+batch_size]]
-        await process_batch(batch, resolver, conn, new_review_entities, dry_run=args.dry_run)
-        
+        batch_entities = await process_batch(batch, resolver, conn, dry_run=args.dry_run)
+        new_review_entities.extend(batch_entities)
+
         if not args.dry_run:
             with conn:
                 for t in batch:

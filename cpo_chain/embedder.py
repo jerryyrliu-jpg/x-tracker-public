@@ -38,7 +38,7 @@ class UniversalEmbedder:
         """
         if not self.model:
             raise RuntimeError("Model not loaded.")
-        
+
         # Nomic requires a prefix for search tasks
         processed_texts = [f"search_document: {t}" for t in texts]
         embeddings = self.model.encode(processed_texts, convert_to_numpy=True)
@@ -50,7 +50,7 @@ class UniversalEmbedder:
         """
         if not self.model:
             raise RuntimeError("Model not loaded.")
-        
+
         # Nomic requires a prefix for queries
         processed_query = f"search_query: {query}"
         embedding = self.model.encode([processed_query], convert_to_numpy=True)[0]
@@ -62,6 +62,6 @@ if __name__ == "__main__":
     test_texts = ["TSMC provides advanced packaging for NVIDIA.", "CPO is a key technology for AI networking."]
     embeddings = embedder.embed_texts(test_texts)
     print(f"Generated {len(embeddings)} embeddings of dimension {len(embeddings[0])}")
-    
+
     query_emb = embedder.embed_query("Who supplies CPO components?")
     print(f"Generated query embedding of dimension {len(query_emb)}")

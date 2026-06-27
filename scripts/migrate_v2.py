@@ -14,15 +14,15 @@ def migrate():
 
     # 1. Add columns to industry_relations
     existing_columns = [row[1] for row in conn.execute("PRAGMA table_info(industry_relations)").fetchall()]
-    
+
     if "base_score" not in existing_columns:
         print("Adding base_score to industry_relations...")
         conn.execute("ALTER TABLE industry_relations ADD COLUMN base_score REAL DEFAULT 0.5;")
-    
+
     if "edgar_score" not in existing_columns:
         print("Adding edgar_score to industry_relations...")
         conn.execute("ALTER TABLE industry_relations ADD COLUMN edgar_score REAL DEFAULT 0.0;")
-        
+
     if "news_score" not in existing_columns:
         print("Adding news_score to industry_relations...")
         conn.execute("ALTER TABLE industry_relations ADD COLUMN news_score REAL DEFAULT 0.0;")

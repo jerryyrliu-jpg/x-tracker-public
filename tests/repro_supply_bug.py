@@ -12,14 +12,14 @@ def test_repro():
 
     industry = "CPO"
     company_search = "NVDA"
-    
+
     industry_data = full_data.get("industries", {}).get(industry.upper())
     if not industry_data:
         print(f"Industry {industry} not found")
         return
 
     tiers_list = industry_data.get("tiers", [])
-    
+
     found = []
     for item in tiers_list:
         t_name = item.get("name", "Unknown")
@@ -27,7 +27,7 @@ def test_repro():
         if company_search and company_search.upper() not in t_name.upper():
             continue
         found.append(item)
-    
+
     print(f"Search for '{company_search}' in '{industry}':")
     if not found:
         print("FAILED to find company")

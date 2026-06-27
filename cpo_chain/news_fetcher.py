@@ -1,4 +1,6 @@
 
+import re
+import calendar
 import feedparser
 import requests
 import sqlite3
@@ -16,9 +18,16 @@ def _fetch_feed(url: str, timeout: int = 10):
         return feedparser.parse(resp.content)
     except Exception as e:
         logger.warning("Feed fetch error: %s", type(e).__name__)
+        # Build an error-flagged result without issuing a second network call.
+        # feedparser.parse(url) would open its own uncontrolled HTTP connection
+        # with no timeout, so we avoid it here and construct the result directly.
         result = feedparser.parse("")
-        result["bozo"] = True
-        result["bozo_exception"] = e
+        try:
+            result["bozo"] = True
+            result["bozo_exception"] = e
+        except TypeError:
+            setattr(result, "bozo", True)
+            setattr(result, "bozo_exception", e)
         return result
 
 class NewsFetcher(Protocol):
@@ -41,7 +50,6 @@ class GoogleNewsRSSFetcher:
         results = []
         for entry in feed.entries:
             try:
-                import calendar
                 pub = datetime.fromtimestamp(calendar.timegm(entry.published_parsed), tz=timezone.utc)
                 if pub >= cutoff:
                     results.append({"title": entry.title, "link": entry.link, "published": pub.isoformat()})
@@ -65,13 +73,14 @@ class YahooRSSFetcher:
     RSS_URL = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
 
     def fetch(self, ticker_a: str, company_b: str, days: int = 30) -> list[dict]:
+        if not re.match(r'^[A-Z\$][A-Z0-9.\-]{0,9}$', str(ticker_a or '')):
+            return []
         url = self.RSS_URL.format(ticker=ticker_a)
         feed = _fetch_feed(url)
         if feed.get("bozo"):
             logger.warning(f"Yahoo RSS bozo: {feed.get('bozo_exception')}")
             return []
-            
-        import calendar
+
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         results = []
         for entry in feed.entries:

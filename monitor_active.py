@@ -101,7 +101,7 @@ async def run_scraper(account: str = "aleabitoreddit"):
             stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
-        
+
         runtime = time.time() - start_time
         if proc.returncode == 0:
             try:
@@ -118,25 +118,25 @@ async def run_scraper(account: str = "aleabitoreddit"):
         else:
             logger.error(f"❌ Scraper failed (Code {proc.returncode}): {stderr.decode(errors='replace')[:500]}")
             metrics.report(False, runtime)
-            
+
     except asyncio.TimeoutError:
         logger.error(f"❌ Scraper Timeout (>600s)")
         metrics.report(False, 600)
     except Exception as e:
         logger.error(f"❌ Monitor Error: {e}")
-    
+
     return False, None
 
 async def main():
-    logger.info("🚀 Starting X-Tracker v4.7.0 Active Monitor...")
-    
+    logger.info("🚀 Starting X-Tracker v3.4 Active Monitor...")
+
     if not lock.acquire():
         logger.error("❌ Process already running (Lock active). Exiting.")
         sys.exit(1)
 
     fail_count = 0
     run_count = 0
-    
+
     try:
         while True:
             run_count += 1
@@ -147,7 +147,7 @@ async def main():
                 ok, res = await run_scraper(account)
                 if not ok:
                     success = False
-            
+
             if not success:
                 fail_count += 1
 
@@ -173,7 +173,7 @@ async def main():
                             logger.error(f"❌ Restart script error: {e}")
             else:
                 fail_count = 0
-            
+
             # 每 100 次或強制 Debug 時發送心跳報告
             if run_count % 100 == 0 or os.environ.get("DEBUG_HEARTBEAT"):
                 stats = metrics.get_summary()
