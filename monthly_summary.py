@@ -53,7 +53,12 @@ def generate_summary(account_cfg: dict, tweets_text: str):
         "- 若推文中無特定方向，請標註為中性或觀察。\n"
         "- Discord 訊息上限為 2000 字元。\n"
     )
-    return run_text_prompt(prompt, timeout=420, backend="auto", gemini_model=_GEMINI_MODEL) or None
+    return run_text_prompt(
+        prompt,
+        timeout=420,
+        backend="google_api",
+        gemini_model=_GEMINI_MODEL,
+    ) or None
 
 
 async def main():

@@ -1,6 +1,6 @@
 import faulthandler
 faulthandler.enable()
-import sqlite3, json, sys, os, subprocess, argparse, re, logging
+import sqlite3, json, sys, os, subprocess, argparse, re, logging, tempfile
 from collections import defaultdict
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -152,60 +152,25 @@ _GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 _DEFAULT_ACCOUNT = "aleabitoreddit"
 
 
-def _run_gemini_cli(prompt: str, timeout: int = 300) -> str:
-    """Run Gemini via CLI subprocess."""
-    return run_text_prompt(prompt, timeout=timeout, backend="gemini-cli", gemini_model=_GEMINI_MODEL)
-
-
-def _run_gemini_sdk(prompt: str, timeout: int = 300) -> str:
-    """Run Gemini via google-generativeai SDK. Falls back to CLI if unavailable."""
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        logger.warning("google-generativeai not installed; falling back to CLI.")
-        return _run_gemini_cli(prompt, timeout)
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        logger.warning("GEMINI_API_KEY not set; falling back to CLI.")
-        return _run_gemini_cli(prompt, timeout)
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(_GEMINI_MODEL)
-        response = model.generate_content(
-            prompt,
-            request_options={"timeout": timeout},
-        )
-        if not response.candidates:
-            logger.warning("Gemini SDK: no candidates (safety block?); falling back to CLI.")
-            return _run_gemini_cli(prompt, timeout)
-        return response.text or ""
-    except Exception:
-        logger.exception("Gemini SDK call failed; falling back to CLI.")
-        return _run_gemini_cli(prompt, timeout)
-
-
 def _run_gemini(prompt: str, timeout: int = 300) -> str:
-    """Route to SDK or CLI based on GEMINI_BACKEND env var.
-
-    GEMINI_BACKEND=sdk  — use SDK (requires GEMINI_API_KEY); falls back to CLI on error
-    GEMINI_BACKEND=cli  — always use CLI subprocess
-    GEMINI_BACKEND=auto — SDK if GEMINI_API_KEY is set, else CLI (default)
-    """
-    backend = os.getenv("GEMINI_BACKEND", "auto").lower()
-    if backend == "auto" and os.getenv("GEMINI_API_KEY"):
-        return _run_gemini_sdk(prompt, timeout)
-    if backend == "auto":
-        return run_text_prompt(prompt, timeout=timeout, backend="auto", gemini_model=_GEMINI_MODEL)
-    if backend == "sdk":
-        return _run_gemini_sdk(prompt, timeout)
-    if backend == "cli":
-        return _run_gemini_cli(prompt, timeout)
-    raise ValueError(f"Unknown GEMINI_BACKEND: {backend}")
+    return run_text_prompt(
+        prompt,
+        timeout=timeout,
+        backend="google_api",
+        gemini_model=_GEMINI_MODEL,
+        cwd=tempfile.gettempdir(),
+    )
 
 
 def get_recent_tweets(conn, days: int, account: str = "aleabitoreddit") -> list:
     """Fetch all tweets within the last `days` days for `account`. No topic filter."""
     since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    if account == "all":
+        return conn.execute(
+            "SELECT id, created_at, text FROM tweets "
+            "WHERE created_at >= ? ORDER BY created_at DESC",
+            (since,),
+        ).fetchall()
     return conn.execute(
         "SELECT id, created_at, text FROM tweets "
         "WHERE account = ? AND created_at >= ? ORDER BY created_at DESC",
@@ -414,7 +379,11 @@ def analyze_topic(topic: str, account: str = "aleabitoreddit", days: int = 30, f
         "warnings": warnings,
     }
 
-    save_cache(topic, result_data, account=account, days=days)
+    if summary:
+        try:
+            save_cache(topic, result_data, account=account, days=days)
+        except Exception as e:
+            logger.warning("analyze_topic: cache save error: %s", type(e).__name__)
     return result_data
 
 

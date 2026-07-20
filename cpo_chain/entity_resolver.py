@@ -1,24 +1,60 @@
 import difflib
 import re
 import sqlite3
+import time
 import yaml
 import requests
 from pathlib import Path
 
 _ENTITY_ID_RE = re.compile(r'^Q\d+$')
 _MAX_ENTITY_NAME_LEN = 80
+_WIKIDATA_MAX_RETRIES = 3
+_WIKIDATA_MIN_INTERVAL_SECONDS = 1.0
 
 class EntityResolver:
-    def __init__(self, db_path: Path, keywords_path: Path):
+    def __init__(self, db_path: Path, keywords_path: Path,
+                 wikidata_min_interval: float = _WIKIDATA_MIN_INTERVAL_SECONDS):
         self.db_path = db_path
         with open(keywords_path, 'r', encoding='utf-8') as f:
             cfg = yaml.safe_load(f)
             self.seed_aliases = cfg.get('seed_aliases', {})
             self.root_tickers = cfg.get('root_tickers', [])
         self._db_cache = None  # Cache for known aliases; not thread-safe — use one instance per thread
+        self._wikidata_cache: dict[str, dict] = {}  # per-instance memo of _fetch_wikidata results
+        self._wikidata_min_interval = wikidata_min_interval
+        self._last_wikidata_call = 0.0
+
+    def _throttle_wikidata(self) -> None:
+        """Enforce a minimum interval between consecutive Wikidata requests."""
+        elapsed = time.monotonic() - self._last_wikidata_call
+        wait = self._wikidata_min_interval - elapsed
+        if wait > 0:
+            time.sleep(wait)
+        self._last_wikidata_call = time.monotonic()
+
+    def _wikidata_get(self, url: str, params: dict | None = None, timeout: int = 5) -> requests.Response:
+        """GET with throttling plus bounded retry/backoff on HTTP 429."""
+        for attempt in range(_WIKIDATA_MAX_RETRIES + 1):
+            self._throttle_wikidata()
+            resp = requests.get(url, params=params, timeout=timeout)
+            if resp.status_code != 429 or attempt == _WIKIDATA_MAX_RETRIES:
+                return resp
+            retry_after = resp.headers.get("Retry-After")
+            try:
+                delay = float(retry_after) if retry_after else 2 ** attempt
+            except ValueError:
+                delay = 2 ** attempt
+            time.sleep(delay)
 
     def _query_wikidata(self, name: str) -> dict:
-        """Query Wikidata for company ticker and industry."""
+        """Query Wikidata for company ticker and industry, memoized per instance."""
+        if name in self._wikidata_cache:
+            return self._wikidata_cache[name]
+        result = self._fetch_wikidata(name)
+        self._wikidata_cache[name] = result
+        return result
+
+    def _fetch_wikidata(self, name: str) -> dict:
         url = "https://www.wikidata.org/w/api.php"
         params = {
             "action": "wbsearchentities",
@@ -27,7 +63,7 @@ class EntityResolver:
             "format": "json"
         }
         try:
-            resp = requests.get(url, params=params, timeout=5)
+            resp = self._wikidata_get(url, params=params, timeout=5)
             data = resp.json()
             if data.get("search"):
                 entity_id = data["search"][0]["id"]
@@ -35,7 +71,7 @@ class EntityResolver:
                     return {}
                 # Get detailed claims (P249 is ticker symbol, P452 is industry)
                 detail_url = f"https://www.wikidata.org/wiki/Special:EntityData/{entity_id}.json"
-                detail_resp = requests.get(detail_url, timeout=5)
+                detail_resp = self._wikidata_get(detail_url, timeout=5)
                 details = detail_resp.json().get("entities", {}).get(entity_id, {})
                 claims = details.get("claims", {})
 

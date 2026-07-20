@@ -1,4 +1,5 @@
 import asyncio, discord, json, os, re, sys, logging, tempfile
+import importlib.util
 from collections import defaultdict
 from datetime import datetime, time, timezone, timedelta
 from discord.ext import commands, tasks
@@ -10,21 +11,26 @@ from cpo_chain.edgar_fetcher import EdgarFetcher
 from cpo_chain.news_fetcher import CompositeNewsFetcher
 from cpo_chain.company_ticker_mapper import CompanyTickerMapper
 from cpo_chain.confidence_updater import ConfidenceUpdater
+from cpo_chain.export_universal import diff_qc_runs
 import yaml
 
 _accounts_yaml_lock = asyncio.Lock()
 
 TICKER_RE = re.compile(r'^[A-Z\$][A-Z0-9.\-]{0,9}$')
 DAYS_RE = re.compile(r'\bdays?:(\d+)\b', re.IGNORECASE)
+_URL_SCHEME_RE = re.compile(r'^https?://', re.IGNORECASE)
 
 _COOLDOWN_SECS = 60
 _CHAIN_COOLDOWN_SECS = 10
 _STATS_COOLDOWN_SECS = 5
 _PAUSE_COOLDOWN_SECS = 30
+_LLM_COOLDOWN_SECS = 30
+_LLM_SUBPROCESS_TIMEOUT_SECS = 300
 _user_cooldowns: dict[int, float] = {}   # heavy ops (Gemini)
 _chain_cooldowns: dict[int, float] = {}  # /chain, /supply
 _stats_cooldowns: dict[int, float] = {}  # /stats
 _pause_cooldowns: dict[int, float] = {}  # /pausex, /resumex
+_llm_cooldowns: dict[int, float] = {}    # /llm
 _gemini_sem = asyncio.Semaphore(3)       # max 3 concurrent Gemini subprocesses
 
 TIER_LABELS: dict[int, str] = {
@@ -37,6 +43,11 @@ TIER_LABELS: dict[int, str] = {
 _user_locks: dict = {}  # per-user asyncio.Lock for cooldown TOCTOU protection
 
 
+def _normalize_industry_key(value: str | None) -> str:
+    normalized = re.sub(r"\s+", " ", (value or "").replace("_", " ")).strip().lower()
+    return re.sub(r"\s*/\s*", " / ", normalized)
+
+
 def _lookup_industry_cache(industries: dict, requested: str):
     if not industries:
         return None
@@ -46,14 +57,30 @@ def _lookup_industry_cache(industries: dict, requested: str):
     result = industries.get(requested)
     if result is not None:
         return result
-    normalized = re.sub(r"\s+", " ", requested.replace("_", " ")).strip().lower()
-    normalized = re.sub(r"\s*/\s*", " / ", normalized)
+    normalized = _normalize_industry_key(requested)
     for key, value in industries.items():
-        candidate = re.sub(r"\s+", " ", key.replace("_", " ")).strip().lower()
-        candidate = re.sub(r"\s*/\s*", " / ", candidate)
+        candidate = _normalize_industry_key(key)
         if candidate == normalized:
             return value
     return None
+
+
+def _get_chain_cache_entry(cache_payload: dict, requested: str):
+    industries = cache_payload.get("industries", {})
+    direct = _lookup_industry_cache(industries, requested)
+    if direct is not None:
+        return direct
+
+    normalized = _normalize_industry_key(requested)
+    for value in industries.values():
+        aliases = value.get("aliases", [])
+        if any(_normalize_industry_key(alias) == normalized for alias in aliases):
+            return value
+    return None
+
+
+def _can_use_vector_recall() -> bool:
+    return importlib.util.find_spec("sqlite_vec") is not None
 
 
 async def _try_cooldown(user_id: int, cooldown_dict: dict = None, secs: int = None) -> float:
@@ -177,25 +204,32 @@ async def _run_daily_summary(accounts_cfg: dict, default_webhook: str) -> None:
 
 
 
-async def _run_cpo_update() -> None:
+async def _run_cpo_update(webhook_url: str = "") -> None:
     """Run Universal Supply Chain extraction and export as subprocess."""
     extract_script = str(SCRAPER_BASE / "cpo_chain" / "extract_universal.py")
     export_script = str(SCRAPER_BASE / "cpo_chain" / "export_universal.py")
 
-    # 1. Extract with vector search and larger limit
-    proc1 = await asyncio.create_subprocess_exec(
-        sys.executable, extract_script, "--limit", "200", "--vector",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=str(SCRAPER_BASE)
-    )
-    try:
-        st1, er1 = await asyncio.wait_for(proc1.communicate(), timeout=600)
-    except asyncio.TimeoutError:
-        proc1.kill(); await proc1.wait()
-        print("[usci-update] extract timed out (>600s)")
-        return
-    if proc1.returncode != 0:
-        print(f"[usci-update] {extract_script} failed: {er1.decode(errors='replace')}")
-        # Fallback to keyword search if vector fails — must await to avoid race with export
+    vector_failed = False
+    if _can_use_vector_recall():
+        proc1 = await asyncio.create_subprocess_exec(
+            sys.executable, extract_script, "--limit", "200", "--vector",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=str(SCRAPER_BASE)
+        )
+        try:
+            _st1, er1 = await asyncio.wait_for(proc1.communicate(), timeout=600)
+        except asyncio.TimeoutError:
+            proc1.kill(); await proc1.wait()
+            print("[usci-update] extract timed out (>600s)")
+            return
+        if proc1.returncode != 0:
+            print(f"[usci-update] {extract_script} failed: {er1.decode(errors='replace')}")
+            vector_failed = True
+    else:
+        print("[usci-update] sqlite_vec unavailable; skipping vector recall and using keyword fallback")
+        vector_failed = True
+
+    if vector_failed:
+        # Fallback to keyword search if vector fails or sqlite_vec is unavailable.
         fallback = await asyncio.create_subprocess_exec(
             sys.executable, extract_script, "--limit", "100",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=str(SCRAPER_BASE)
@@ -226,6 +260,54 @@ async def _run_cpo_update() -> None:
         return
 
     print("[usci-update] Universal supply chain update successful.")
+    await _check_runtime_qc_and_alert(webhook_url)
+
+
+def _format_qc_alert(diff: dict) -> str | None:
+    """Format a low-noise Discord message for new/resolved runtime QC issues.
+
+    Returns None when nothing changed since the previous export run -- callers
+    should stay silent rather than re-alert on a warning that already persisted.
+    """
+    new = diff.get("new") or {}
+    resolved = diff.get("resolved") or []
+    if not new and not resolved:
+        return None
+
+    lines = ["🔧 **Runtime QC 更新**（`/chain` 匯出品質檢查）"]
+    for ctx in sorted(new):
+        warnings = new[ctx]
+        lines.append(f"⚠️ `{ctx}`：{len(warnings)} 個新問題")
+        for warning in warnings[:3]:
+            lines.append(f"  - {warning}")
+        if len(warnings) > 3:
+            lines.append(f"  - ...(還有 {len(warnings) - 3} 筆)")
+    if resolved:
+        lines.append("✅ 已恢復正常：" + ", ".join(f"`{ctx}`" for ctx in resolved))
+    return "\n".join(lines)
+
+
+async def _check_runtime_qc_and_alert(webhook_url: str) -> None:
+    """Alert on NEW runtime QC warnings only, diffed against the previous export run."""
+    if not webhook_url:
+        return
+    qc_path = SCRAPER_BASE / "cpo_chain" / "output" / "usci_runtime_qc.json"
+    if not qc_path.exists():
+        return
+    try:
+        payload = json.loads(qc_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    runs = payload.get("runs") if isinstance(payload, dict) else None
+    if not isinstance(runs, list) or not runs:
+        return
+    current = runs[-1].get("contexts", {}) if isinstance(runs[-1], dict) else {}
+    previous = runs[-2].get("contexts", {}) if len(runs) >= 2 and isinstance(runs[-2], dict) else {}
+    diff = diff_qc_runs(previous, current)
+    message = _format_qc_alert(diff)
+    if message:
+        await send_discord(webhook_url, message)
+
 
 async def _run_monthly_summary(webhook_url: str) -> None:
     """Call monthly_summary.py for every account in accounts.yaml."""
@@ -386,7 +468,7 @@ async def scheduled_summary():
 
     if now_taipei.weekday() == 0: # Monday
         print("[scheduler] Monday — running CPO chain update")
-        await _run_cpo_update()
+        await _run_cpo_update(webhook_url)
 
 
 @bot.event
@@ -406,7 +488,7 @@ async def on_ready():
 
 
     print(f"[bot] Bot is ready!")
-    await bot.change_presence(activity=discord.Game(name="V3.7_LOCAL_ACTIVE"))
+    await bot.change_presence(activity=discord.Game(name="V4.8.0_ACTIVE"))
     if not scheduled_summary.is_running():
         scheduled_summary.start()
     if not scheduled_confidence_boost.is_running():
@@ -514,7 +596,7 @@ async def supply_query(interaction: discord.Interaction, industry: str = "CPO", 
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
     industry = industry.strip()[:30]
-    if not re.match(r'^[A-Za-z0-9_\- ]{1,30}$', industry):
+    if not re.match(r'^[A-Za-z0-9_/\- ]{1,30}$', industry):
         await interaction.response.send_message("⚠️ 無效的產業語境格式。", ephemeral=True)
         return
     await interaction.response.defer(thinking=True)
@@ -663,115 +745,31 @@ async def chain_view(interaction: discord.Interaction, industry: str = "CPO"):
         await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
         return
     industry = industry.strip()[:30]
-    if not re.match(r'^[A-Za-z0-9_\- ]{1,30}$', industry):
+    if not re.match(r'^[A-Za-z0-9_/\- ]{1,30}$', industry):
         await interaction.response.send_message("⚠️ 無效的產業語境格式。", ephemeral=True)
         return
     await interaction.response.defer(thinking=True)
-    db_path = SCRAPER_BASE / "tweets.db"
-    conn = None
     try:
-        conn = get_db_conn(db_path)
         ctx = industry.upper()
-
-        # Layers defined by role_category on outgoing relations
-        LAYERS = [
-            ("material",    "🪨 原材料層"),
-            ("upstream",    "⚙️ 製造/元器件"),
-            ("midstream",   "🔄 中游/整合"),
-            ("equipment",   "🔧 設備/EDA"),
-            ("downstream",  "📦 模組/封裝"),
-        ]
-
-        # Get all companies with relations in this context
-        rows = conn.execute("""
-            SELECT DISTINCT e.id, e.name, e.ticker, e.industry_tags,
-                   r.role_category,
-                   MAX(r.confidence) as max_conf
-            FROM industry_entities e
-            JOIN industry_relations r ON r.from_company_id = e.id
-            WHERE r.status='active' AND r.industry_context=?
-            GROUP BY e.id, r.role_category
-            ORDER BY r.role_category, max_conf DESC
-        """, (ctx,)).fetchall()
-
-        # Hyperscaler tier 0 companies (customers / root nodes)
-        root_rows = conn.execute("""
-            SELECT DISTINCT e.id, e.name, e.ticker
-            FROM industry_entities e
-            JOIN industry_relations r ON r.to_company_id = e.id
-            WHERE r.status='active' AND r.industry_context=?
-              AND e.id NOT IN (
-                  SELECT from_company_id FROM industry_relations
-                  WHERE status='active' AND industry_context=?
-              )
-            ORDER BY e.name
-        """, (ctx, ctx)).fetchall()
-
-        # Fall back to JSON cache when SQL DB is sparse (< 20 active relations for this context)
-        USE_CACHE = len(rows) + len(root_rows) < 20
         cache_path = SCRAPER_BASE / "cpo_chain" / "output" / "usci_tiers_cache.json"
-        if USE_CACHE and cache_path.exists():
-            with open(cache_path, encoding="utf-8") as _f:
-                _cache = json.load(_f)
-            _inds = _cache.get("industries", {})
-            industry_data = _lookup_industry_cache(_inds, ctx) or _lookup_industry_cache(_inds, industry)
-            if industry_data:
-                msg = _render_chain_from_cache(industry_data, ctx, _cache.get("metadata", {}))
-                await interaction.followup.send(msg)
-                return
+        if not cache_path.exists():
+            await interaction.followup.send("❌ 找不到 `/chain` 快取，請先執行 USCI 匯出。")
+            return
 
-        if not rows and not root_rows:
+        with open(cache_path, encoding="utf-8") as f:
+            cache_payload = json.load(f)
+
+        industry_data = _get_chain_cache_entry(cache_payload, industry)
+        if industry_data is None:
             await interaction.followup.send(f"❌ 找不到 `{ctx}` 的供應鏈資料。")
             return
 
-        # Group by role_category
-        groups = defaultdict(list)
-        seen = set()
-        for r in rows:
-            key = (r["id"], r["role_category"])
-            if key not in seen:
-                seen.add(key)
-                groups[r["role_category"]].append(r)
-
-        lines = [f"## 📊 {ctx} Supply Chain — 上中下游全景\n"]
-
-        for cat, label in LAYERS:
-            companies = groups.get(cat, [])
-            if not companies:
-                continue
-            parts = []
-            for c in companies[:12]:
-                ticker = c["ticker"]
-                name = discord.utils.escape_markdown(c["name"])
-                conf = c["max_conf"]
-                badge = "✅" if conf >= 0.8 else ("📄" if conf >= 0.6 else "⚠️")
-                tag = f"`${ticker}`" if ticker and TICKER_RE.match(ticker) else f"_{name}_"
-                parts.append(f"{badge} {tag}")
-            overflow = len(companies) - 12
-            line = f"**{label}**\n" + "  ".join(parts)
-            if overflow > 0:
-                line += f" _(+{overflow} more)_"
-            lines.append(line)
-
-        # Add hyperscalers
-        if root_rows:
-            h_parts = [f"`${r['ticker']}`" if r["ticker"] and TICKER_RE.match(r["ticker"]) else f"_{discord.utils.escape_markdown(r['name'])}_" for r in root_rows[:8]]
-            lines.append(f"**🏢 終端客戶 (Hyperscaler)**\n" + "  ".join(h_parts))
-
-        lines.append(f"\n_資料來源: USCI DB · 使用 `/supply company:NVDA` 查詢詳細供應關係_")
-        msg = "\n\n".join(lines)
-
-        # Discord 2000 char limit
-        if len(msg) > 1950:
-            msg = msg[:1947] + "…"
+        msg = _render_chain_from_cache(industry_data, ctx, cache_payload.get("metadata", {}))
         await interaction.followup.send(msg)
 
     except Exception as e:
         print(f"Error in /chain: {type(e).__name__}", file=sys.stderr)
         await interaction.followup.send("❌ 查詢失敗。")
-    finally:
-        if conn:
-            conn.close()
 
 
 @tree.command(name="account", description="啟用或停用監控帳號 (僅限 Bot 擁有者)")
@@ -810,7 +808,7 @@ async def account_toggle(interaction: discord.Interaction, action: str, name: st
                 return
 
             if not name:
-                await interaction.followup.send("❌ 請指定帳號名稱，例如：`/account action:disable name:gbstocks`", ephemeral=True)
+                await interaction.followup.send("❌ 請指定帳號名稱，例如：`/account action:disable name:your_account_name`", ephemeral=True)
                 return
 
             if name not in accounts_cfg:
@@ -1051,6 +1049,72 @@ async def analyze(interaction: discord.Interaction, symbol: str, days: int = 30)
         if stderr:
             print(f"Error analyzing {ticker}: {stderr.decode(errors='replace')[:500]}")
         await interaction.followup.send(f"找不到關於 {ticker} 的推文或分析失敗。")
+
+
+@tree.command(name="llm", description="摘要任意 URL 的內文，支援 X/Twitter 推文與一般網頁")
+@app_commands.describe(url="要摘要的網址（例如：https://x.com/user/status/123 或任意文章 URL）")
+async def llm_summarize(interaction: discord.Interaction, url: str):
+    remaining = await _try_cooldown(interaction.user.id, _llm_cooldowns, _LLM_COOLDOWN_SECS)
+    if remaining > 0:
+        await interaction.response.send_message(f"⏳ 請等 {remaining:.0f} 秒後再試。", ephemeral=True)
+        return
+
+    url = url.strip()
+    if not _URL_SCHEME_RE.match(url):
+        await interaction.response.send_message(
+            "⚠️ 請提供完整網址（以 http:// 或 https:// 開頭）。",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(thinking=True)
+    _fd, out_file = tempfile.mkstemp(suffix=".json", prefix="xtracker_llm_")
+    os.close(_fd)
+    cmd = [sys.executable, str(SCRAPER_BASE / "llm_url.py"), "--url", url, "--output", out_file]
+    try:
+        async with _gemini_sem:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(SCRAPER_BASE),
+            )
+            try:
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=_LLM_SUBPROCESS_TIMEOUT_SECS)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                await interaction.followup.send("⚠️ 摘要逾時 (>3m)，已中止。")
+                return
+
+        if stderr:
+            print(f"[llm] subprocess stderr: {stderr.decode(errors='replace')[:500]}")
+        res = None
+        if os.path.exists(out_file):
+            try:
+                with open(out_file, encoding="utf-8") as f:
+                    raw_output = f.read().strip()
+                if raw_output:
+                    res = json.loads(raw_output)
+            except (OSError, json.JSONDecodeError) as e:
+                print(f"[llm] read output error: {e}")
+        if res is not None:
+            summary = res.get("summary", "")[:8000]
+            if summary:
+                header = f"🔗 **摘要 — {url[:80]}{'…' if len(url) > 80 else ''}**\n"
+                for i in range(0, len(summary), 1900):
+                    await interaction.followup.send((header if i == 0 else "") + summary[i:i + 1900])
+            else:
+                err_msg = res.get("error", "摘要失敗")
+                await interaction.followup.send(f"⚠️ {err_msg}")
+        else:
+            await interaction.followup.send("⚠️ 無法取得摘要，請確認網址是否可存取。")
+    except Exception as e:
+        print(f"[llm] read output error: {e}")
+        await interaction.followup.send("⚠️ 內部錯誤，請查看日誌。")
+    finally:
+        if os.path.exists(out_file):
+            os.unlink(out_file)
 
 
 

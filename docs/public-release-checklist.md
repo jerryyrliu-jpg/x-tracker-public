@@ -27,6 +27,7 @@ Use this checklist before pushing any change set to `jerryyrliu-jpg/x-tracker-pu
 2. Confirm every manifest path is explicitly allowlisted in `docs/public-sync-policy.md`.
 3. Review the actual diff for only those manifest paths before publication.
 4. Treat any non-manifest internal docs, themes, local state files, or caches as non-public by default.
+5. Treat `archive/` and `docs/superpowers/` as permanent internal-only areas; do not propose them for public sync, even after sanitization.
 
 ## Approval Gate
 

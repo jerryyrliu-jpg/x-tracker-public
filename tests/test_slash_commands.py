@@ -1,4 +1,4 @@
-"""Tests for slash command handlers: /stats, /summary, /analyze."""
+"""Tests for slash command handlers: /stats, /summary, /analyze, /llm."""
 import asyncio, json, sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch, mock_open
@@ -57,6 +57,128 @@ class TestStats:
         interaction.followup.send.assert_awaited_once()
         msg = interaction.followup.send.call_args[0][0]
         assert "無法讀取" in msg
+
+
+# ---------------------------------------------------------------------------
+# /chain
+# ---------------------------------------------------------------------------
+
+class TestChain:
+    def test_chain_reads_cache_only_for_case_insensitive_context_match(self, tmp_path):
+        interaction = _make_interaction()
+        output_dir = tmp_path / "cpo_chain" / "output"
+        output_dir.mkdir(parents=True)
+        cache_payload = {
+            "metadata": {"generated_at": "2026-07-14T00:00:00"},
+            "industries": {
+                "Aerospace": {
+                    "aliases": ["Aerospace"],
+                    "tiers": [
+                        {"id": 1, "name": "Boeing", "ticker": "BA", "tier": 0},
+                        {"id": 2, "name": "Supplier 2", "ticker": None, "tier": 1},
+                    ],
+                    "links": [],
+                }
+            },
+        }
+        (output_dir / "usci_tiers_cache.json").write_text(json.dumps(cache_payload), encoding="utf-8")
+
+        with patch("discord_bot.get_db_conn", side_effect=AssertionError("DB should not be opened")), \
+             patch("discord_bot._try_cooldown", new=AsyncMock(return_value=0)), \
+             patch.object(discord_bot, "SCRAPER_BASE", tmp_path):
+            run(discord_bot.chain_view.callback(interaction, industry="AEROSPACE"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "AEROSPACE Supply Chain" in msg
+        assert "找不到" not in msg
+
+    def test_chain_reads_cache_only_for_context_alias(self, tmp_path):
+        interaction = _make_interaction()
+        output_dir = tmp_path / "cpo_chain" / "output"
+        output_dir.mkdir(parents=True)
+        cache_payload = {
+            "metadata": {"generated_at": "2026-07-14T00:00:00"},
+            "industries": {
+                "AI Server": {
+                    "aliases": ["AI Server", "AI_Server"],
+                    "tiers": [
+                        {"id": 1, "name": "NVIDIA", "ticker": "NVDA", "tier": 0},
+                        {"id": 2, "name": "Foxconn", "ticker": "2317", "tier": 1},
+                    ],
+                    "links": [],
+                }
+            },
+        }
+        (output_dir / "usci_tiers_cache.json").write_text(json.dumps(cache_payload), encoding="utf-8")
+
+        with patch("discord_bot.get_db_conn", side_effect=AssertionError("DB should not be opened")), \
+             patch("discord_bot._try_cooldown", new=AsyncMock(return_value=0)), \
+             patch.object(discord_bot, "SCRAPER_BASE", tmp_path):
+            run(discord_bot.chain_view.callback(interaction, industry="AI SERVER"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "AI SERVER Supply Chain" in msg
+        assert "`$NVDA`" in msg
+
+    def test_chain_reads_cache_only_for_slash_alias(self, tmp_path):
+        interaction = _make_interaction()
+        output_dir = tmp_path / "cpo_chain" / "output"
+        output_dir.mkdir(parents=True)
+        cache_payload = {
+            "metadata": {"generated_at": "2026-07-14T00:00:00"},
+            "industries": {
+                "CPO / Silicon Photonics": {
+                    "aliases": ["CPO / Silicon Photonics", "CPO/Silicon Photonics"],
+                    "tiers": [
+                        {"id": 1, "name": "NVIDIA", "ticker": "NVDA", "tier": 0},
+                        {"id": 2, "name": "Ayar Labs", "ticker": None, "tier": 1},
+                    ],
+                    "links": [],
+                }
+            },
+        }
+        (output_dir / "usci_tiers_cache.json").write_text(json.dumps(cache_payload), encoding="utf-8")
+
+        with patch("discord_bot.get_db_conn", side_effect=AssertionError("DB should not be opened")), \
+             patch("discord_bot._try_cooldown", new=AsyncMock(return_value=0)), \
+             patch.object(discord_bot, "SCRAPER_BASE", tmp_path):
+            run(discord_bot.chain_view.callback(interaction, industry="CPO/SILICON PHOTONICS"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "CPO/SILICON PHOTONICS Supply Chain" in msg
+        assert "`$NVDA`" in msg
+
+    def test_chain_reads_canonical_cache_contract_without_opening_db(self, tmp_path):
+        interaction = _make_interaction()
+        output_dir = tmp_path / "cpo_chain" / "output"
+        output_dir.mkdir(parents=True)
+        cache_payload = {
+            "metadata": {"generated_at": "2026-07-14T00:00:00"},
+            "industries": {
+                "AI Server": {
+                    "aliases": ["AI Server", "AI_Server"],
+                    "tiers": [
+                        {"id": 1, "name": "NVIDIA", "ticker": "NVDA", "tier": 0},
+                        {"id": 2, "name": "Foxconn", "ticker": "2317", "tier": 1},
+                    ],
+                    "links": [],
+                }
+            },
+        }
+        (output_dir / "usci_tiers_cache.json").write_text(json.dumps(cache_payload), encoding="utf-8")
+
+        with patch("discord_bot.get_db_conn", side_effect=AssertionError("DB should not be opened")), \
+             patch("discord_bot._try_cooldown", new=AsyncMock(return_value=0)), \
+             patch.object(discord_bot, "SCRAPER_BASE", tmp_path):
+            run(discord_bot.chain_view.callback(interaction, industry="AI SERVER"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "`$NVDA`" in msg
+        assert "_資料來源: USCI Cache" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +291,8 @@ class TestAnalyze:
         proc = AsyncMock()
         proc.returncode = returncode
         proc.communicate = AsyncMock(return_value=(b"", b""))
+        proc.kill = MagicMock()
+        proc.wait = AsyncMock(return_value=None)
         return proc
 
     def test_analyze_invalid_symbol_rejected(self):
@@ -283,6 +407,152 @@ class TestAnalyze:
         interaction.followup.send.assert_awaited_once()
         msg = interaction.followup.send.call_args[0][0]
         assert "失敗" in msg
+
+
+# ---------------------------------------------------------------------------
+# /llm
+# ---------------------------------------------------------------------------
+
+class TestLlm:
+    def _mock_proc(self, returncode=0):
+        proc = AsyncMock()
+        proc.returncode = returncode
+        proc.communicate = AsyncMock(return_value=(b"", b""))
+        proc.kill = MagicMock()
+        proc.wait = AsyncMock(return_value=None)
+        return proc
+
+    def test_llm_rejects_invalid_scheme(self):
+        interaction = _make_interaction()
+
+        run(discord_bot.llm_summarize.callback(interaction, url="x.com/user/status/123"))
+
+        interaction.response.send_message.assert_awaited_once()
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "http://" in msg or "https://" in msg
+
+    def test_llm_sends_summary_via_followup(self):
+        interaction = _make_interaction()
+        proc = self._mock_proc()
+        payload = json.dumps({"summary": "這是一篇文章摘要"})
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data=payload)), \
+             patch("os.unlink"):
+            run(discord_bot.llm_summarize.callback(interaction, url="https://x.com/user/status/123"))
+
+        interaction.followup.send.assert_awaited()
+        sent = interaction.followup.send.call_args_list[0][0][0]
+        assert "摘要" in sent
+
+    def test_llm_timeout_sends_error(self):
+        interaction = _make_interaction()
+        proc = self._mock_proc()
+        proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+            run(discord_bot.llm_summarize.callback(interaction, url="https://example.com/article"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "逾時" in msg
+
+    def test_llm_failure_sends_error(self):
+        interaction = _make_interaction()
+        proc = self._mock_proc(returncode=1)
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("os.path.exists", return_value=False):
+            run(discord_bot.llm_summarize.callback(interaction, url="https://example.com/article"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "無法取得摘要" in msg
+
+    def test_llm_failure_with_empty_output_file_does_not_fall_back_to_internal_error(self):
+        interaction = _make_interaction()
+        proc = self._mock_proc(returncode=1)
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data="")), \
+             patch("os.unlink"):
+            run(discord_bot.llm_summarize.callback(interaction, url="https://example.com/article"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "無法取得摘要" in msg
+
+    def test_llm_failure_surfaces_json_error_when_present(self):
+        interaction = _make_interaction()
+        proc = self._mock_proc(returncode=1)
+        payload = json.dumps({"summary": "", "error": "無法擷取推文內容（CDP 未啟動或需要登入）"})
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data=payload)), \
+             patch("os.unlink"):
+            run(discord_bot.llm_summarize.callback(interaction, url="https://x.com/user/status/123"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "無法擷取推文內容" in msg
+
+    def test_llm_failure_surfaces_empty_backend_error_when_present(self):
+        interaction = _make_interaction()
+        proc = self._mock_proc(returncode=1)
+        payload = json.dumps({"summary": "", "error": "LLM 無回應、逾時，或只回傳無效內容"})
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data=payload)), \
+             patch("os.unlink"):
+            run(discord_bot.llm_summarize.callback(interaction, url="https://example.com/article"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "LLM 無回應、逾時，或只回傳無效內容" in msg
+
+    def test_llm_uses_longer_outer_timeout_budget(self):
+        interaction = _make_interaction()
+        proc = self._mock_proc()
+        payload = json.dumps({"summary": "摘要"})
+        seen = {}
+
+        async def fake_exec(*args, **kwargs):
+            return proc
+
+        async def fake_wait_for(awaitable, timeout):
+            seen["timeout"] = timeout
+            return await awaitable
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("asyncio.wait_for", side_effect=fake_wait_for), \
+             patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data=payload)), \
+             patch("os.unlink"):
+            run(discord_bot.llm_summarize.callback(interaction, url="https://x.com/user/status/123"))
+
+        assert seen["timeout"] >= 300
 
 
 # ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import logging
 import os
 import sqlite3
 import sys
+import tempfile
 import yaml
 import argparse
 import subprocess
@@ -31,9 +32,11 @@ except ImportError:
 try:
     from .entity_resolver import EntityResolver
     from . import prompts
+    from . import ocr_utils
 except ImportError:
     from entity_resolver import EntityResolver
     import prompts
+    import ocr_utils
 from llm_client import run_text_prompt
 
 try:
@@ -46,6 +49,8 @@ except ImportError:
 logger = setup_logger("usci_extractor", "usci_extractor.log")
 DB_PATH = BASE_DIR / "tweets.db"
 KEYWORDS_PATH = CPO_CHAIN_DIR / "keywords.yaml"
+OCR_IMAGES_ROOT = (BASE_DIR / "images").resolve()
+_OCR_ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 class RelationItem(pydantic.BaseModel):
     from_entity: str
@@ -60,6 +65,113 @@ class RelationItem(pydantic.BaseModel):
 _ISOLATION_RE = re.compile(r'</?(?:TWEET_DATA|NEWS_DATA)>', re.IGNORECASE)
 
 
+def _parse_image_paths(raw_images: str | None) -> list[str]:
+    if not raw_images:
+        return []
+    try:
+        data = json.loads(raw_images)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return [str(item) for item in data if isinstance(item, str)]
+
+
+def _collect_image_ocr_text(image_paths: list[str]) -> list[str]:
+    backend = ocr_utils.detect_ocr_backend()
+    if not backend:
+        return []
+
+    collected: list[str] = []
+    for raw_path in image_paths:
+        path = Path(raw_path)
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved.suffix.lower() not in _OCR_ALLOWED_SUFFIXES:
+            continue
+        if OCR_IMAGES_ROOT not in resolved.parents:
+            continue
+        text = ocr_utils.extract_text_from_image(str(resolved), backend=backend).strip()
+        if text:
+            collected.append(text[:4000])
+    return collected
+
+
+def _build_enriched_tweet_text(tweet: dict) -> str:
+    base_text = (tweet.get("text") or "").strip()
+    parts = [f"[TWEET_TEXT]\n{base_text}" if base_text else "[TWEET_TEXT]"]
+    image_paths = _parse_image_paths(tweet.get("images"))
+    ocr_texts = _collect_image_ocr_text(image_paths)
+    if ocr_texts:
+        image_lines = []
+        for idx, text in enumerate(ocr_texts, start=1):
+            image_lines.append(f"Image {idx}:\n{text}")
+        parts.append("[IMAGE_OCR]\n" + "\n\n".join(image_lines))
+    return "\n\n".join(parts)
+
+
+def _build_batch_payload(tweet: dict) -> dict:
+    return {
+        "id": tweet["id"],
+        "text": _build_enriched_tweet_text(tweet),
+        "raw_text": tweet.get("text", ""),
+        "images": tweet.get("images", "[]"),
+    }
+
+
+def _select_tweets_by_ids(conn, tweet_ids: list[str]) -> list[dict]:
+    if not tweet_ids:
+        return []
+    placeholders = ",".join("?" for _ in tweet_ids)
+    rows = conn.execute(
+        f"SELECT id, text, images, created_at FROM tweets WHERE id IN ({placeholders}) ORDER BY created_at DESC",
+        tweet_ids,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _mark_extraction_result(conn, tweet_id: str, relations_found: int) -> None:
+    conn.execute(
+        """
+        INSERT INTO industry_extract_log (tweet_id, relations_found)
+        VALUES (?, ?)
+        ON CONFLICT(tweet_id) DO UPDATE SET
+            processed_at = datetime('now'),
+            relations_found = excluded.relations_found
+        """,
+        (tweet_id, relations_found),
+    )
+
+
+def _record_batch_results(conn, batch: list[dict], before_counts: dict) -> None:
+    for t in batch:
+        if not t.get("_extraction_completed"):
+            continue
+        after_count = conn.execute(
+            "SELECT COUNT(*) FROM industry_relation_evidence WHERE tweet_id = ?",
+            (t["id"],),
+        ).fetchone()[0]
+        _mark_extraction_result(conn, t["id"], max(0, after_count - before_counts[t["id"]]))
+
+
+def _load_requested_tweet_ids(args) -> list[str]:
+    tweet_ids = list(args.tweet_id or [])
+    if args.tweet_ids_file:
+        ids_path = Path(args.tweet_ids_file)
+        try:
+            raw_lines = ids_path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            raise ValueError(f"Unable to read tweet IDs file: {ids_path}") from exc
+
+        file_ids = [line.strip() for line in raw_lines if line.strip()]
+        if not file_ids:
+            raise ValueError(f"Tweet IDs file is empty: {ids_path}")
+        tweet_ids.extend(file_ids)
+    return list(dict.fromkeys(tweet_ids))
+
+
 def load_sqlite_vec():
     try:
         return importlib.import_module("sqlite_vec")
@@ -68,6 +180,9 @@ def load_sqlite_vec():
 
 
 def load_vector_dependencies():
+    sqlite_vec = load_sqlite_vec()
+    if sqlite_vec is None:
+        raise RuntimeError("sqlite_vec is required for --vector mode but is not installed")
     try:
         vec_db_mod = importlib.import_module("cpo_chain.vec_db")
         embedder_mod = importlib.import_module("cpo_chain.embedder")
@@ -90,6 +205,7 @@ async def call_gemini(tweets_batch: list[dict]) -> list[dict]:
             timeout=120,
             backend="auto",
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+            cwd=tempfile.gettempdir(),
         )
         if not output:
             raise ValueError("No output returned from LLM backend")
@@ -112,22 +228,28 @@ async def process_batch(batch_tweets, resolver, conn, dry_run=False):
     Returns a list of entity names that need review.
     """
     collected_review_entities = []
+    if len(batch_tweets) > 1:
+        for t in batch_tweets:
+            sub_entities = await process_batch([t], resolver, conn, dry_run)
+            collected_review_entities.extend(sub_entities)
+        return collected_review_entities
+
+    for tweet in batch_tweets:
+        tweet["_extraction_completed"] = False
     try:
         relations = await call_gemini(batch_tweets)
     except Exception as e:
         logger.error(f"Batch failed: {e}")
-        if len(batch_tweets) > 1:
-            for t in batch_tweets:
-                sub_entities = await process_batch([t], resolver, conn, dry_run)
-                collected_review_entities.extend(sub_entities)
         return collected_review_entities
 
     if not relations:
+        for tweet in batch_tweets:
+            tweet["_extraction_completed"] = True
         return collected_review_entities
 
     to_save = []
     unique_rels = set()
-    tweet_map = {t["id"]: t["text"] for t in batch_tweets}
+    tweet_map = {t["id"]: t.get("raw_text") or t["text"] for t in batch_tweets}
 
     for rel in relations:
         if rel.get("confidence", 0) < 0.6:
@@ -207,7 +329,10 @@ async def process_batch(batch_tweets, resolver, conn, dry_run=False):
                             """, (rel_id, tid, item["evidence_type"], snip))
         except Exception as e:
             logger.error(f"DB Error: {e}")
+            return collected_review_entities
 
+    for tweet in batch_tweets:
+        tweet["_extraction_completed"] = True
     return collected_review_entities
 
 async def main():
@@ -216,6 +341,8 @@ async def main():
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--vector", action="store_true", help="Use vector search for recall")
     parser.add_argument("--all-tweets", action="store_true", help="Process all unprocessed tweets regardless of keyword match")
+    parser.add_argument("--tweet-id", action="append", default=[], help="Process an explicit tweet ID; may be repeated")
+    parser.add_argument("--tweet-ids-file", type=str, help="Path to newline-delimited tweet IDs")
     parser.add_argument("--query", type=str, default="Supply chain transactions, assembly, packaging, and raw material relationships for AI, CPO, HBM, Liquid Cooling.")
     args = parser.parse_args()
 
@@ -224,24 +351,33 @@ async def main():
     resolver = EntityResolver(DB_PATH, KEYWORDS_PATH)
 
     tweets = []
+    try:
+        requested_ids = _load_requested_tweet_ids(args)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     # Stage 1: Recall
-    if args.vector:
+    if requested_ids:
+        logger.info("Using explicit tweet-id selection for recall...")
+        tweets = _select_tweets_by_ids(conn, requested_ids)
+        if not tweets:
+            logger.error("No valid tweet rows found for requested tweet IDs.")
+            conn.close()
+            sys.exit(1)
+    elif args.vector:
         logger.info("Using vector search for recall...")
         vec_db, UniversalEmbedder = load_vector_dependencies()
         embedder = UniversalEmbedder()
         query_vec = embedder.embed_query(args.query)
 
         sqlite_vec = load_sqlite_vec()
-        if sqlite_vec is None:
-            raise RuntimeError("sqlite_vec is required for --vector mode but is not installed")
 
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
 
         # Query vector index
         query = """
-        SELECT t.id, t.text
+        SELECT t.id, t.text, t.images, t.created_at
         FROM tweet_embeddings v
         JOIN tweets t ON CAST(v.tweet_id AS TEXT) = t.id
         WHERE v.tweet_id NOT IN (SELECT tweet_id FROM industry_extract_log)
@@ -253,7 +389,7 @@ async def main():
         # All-tweets mode: process every unprocessed tweet, no keyword filter
         logger.info("Using all-tweets mode (no keyword filter)...")
         query = """
-        SELECT t.id, t.text
+        SELECT t.id, t.text, t.images, t.created_at
         FROM tweets t
         WHERE t.id NOT IN (SELECT tweet_id FROM industry_extract_log)
         ORDER BY t.created_at DESC
@@ -268,7 +404,7 @@ async def main():
 
         fts_query = " OR ".join([f'"{k}"' for k in keywords])
         query = """
-        SELECT t.id, t.text
+        SELECT t.id, t.text, t.images, t.created_at
         FROM tweets t
         JOIN tweets_fts f ON t.rowid = f.rowid
         WHERE t.id NOT IN (SELECT tweet_id FROM industry_extract_log)
@@ -282,14 +418,25 @@ async def main():
 
     batch_size = 5
     for i in range(0, len(tweets), batch_size):
-        batch = [{"id": r[0], "text": r[1]} for r in tweets[i:i+batch_size]]
+        batch = []
+        for r in tweets[i:i + batch_size]:
+            row = dict(r) if not isinstance(r, dict) else r
+            batch.append(_build_batch_payload(row))
+
+        before_counts = {
+            t["id"]: conn.execute(
+                "SELECT COUNT(*) FROM industry_relation_evidence WHERE tweet_id = ?",
+                (t["id"],),
+            ).fetchone()[0]
+            for t in batch
+        }
+
         batch_entities = await process_batch(batch, resolver, conn, dry_run=args.dry_run)
         new_review_entities.extend(batch_entities)
 
         if not args.dry_run:
             with conn:
-                for t in batch:
-                    conn.execute("INSERT OR IGNORE INTO industry_extract_log (tweet_id) VALUES (?)", (t["id"],))
+                _record_batch_results(conn, batch, before_counts)
 
     if not args.dry_run and new_review_entities:
         unique_new = list(set(new_review_entities))

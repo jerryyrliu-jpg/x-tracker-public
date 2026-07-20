@@ -97,3 +97,157 @@ class TestLookupIndustryCache:
         result = _lookup_industry_cache(cache, "AI Server")
         assert result is not None
         assert result == {}
+
+
+def test_can_use_vector_recall_false_when_sqlite_vec_missing():
+    from discord_bot import _can_use_vector_recall
+    with patch("importlib.util.find_spec", return_value=None):
+        assert _can_use_vector_recall() is False
+
+
+class TestFormatQcAlert:
+    def test_returns_none_when_nothing_new_or_resolved(self):
+        from discord_bot import _format_qc_alert
+        assert _format_qc_alert({"new": {}, "resolved": []}) is None
+
+    def test_formats_new_warnings_by_context(self):
+        from discord_bot import _format_qc_alert
+        diff = {"new": {"CPO": ["[runtime-qc][CPO] orphan nodes: A"]}, "resolved": []}
+        message = _format_qc_alert(diff)
+        assert message is not None
+        assert "CPO" in message
+        assert "orphan nodes: A" in message
+
+    def test_truncates_long_warning_lists_per_context(self):
+        from discord_bot import _format_qc_alert
+        warnings = [f"[runtime-qc][CPO] orphan nodes: N{i}" for i in range(5)]
+        diff = {"new": {"CPO": warnings}, "resolved": []}
+        message = _format_qc_alert(diff)
+        assert "N0" in message and "N1" in message and "N2" in message
+        assert "N4" not in message
+        assert "還有" in message
+
+    def test_formats_resolved_contexts(self):
+        from discord_bot import _format_qc_alert
+        diff = {"new": {}, "resolved": ["CPO", "AI Server"]}
+        message = _format_qc_alert(diff)
+        assert message is not None
+        assert "CPO" in message and "AI Server" in message
+
+
+class TestCheckRuntimeQcAndAlert:
+    def test_no_qc_file_sends_nothing(self, tmp_path):
+        import asyncio
+        from unittest.mock import AsyncMock
+        from discord_bot import _check_runtime_qc_and_alert
+
+        with patch.object(discord_bot, "SCRAPER_BASE", tmp_path), \
+             patch("discord_bot.send_discord", new=AsyncMock()) as mock_send:
+            asyncio.run(_check_runtime_qc_and_alert("https://example.invalid/webhook"))
+
+        mock_send.assert_not_awaited()
+
+    def test_no_webhook_url_sends_nothing(self, tmp_path):
+        import asyncio
+        from unittest.mock import AsyncMock
+        from discord_bot import _check_runtime_qc_and_alert
+
+        output_dir = tmp_path / "cpo_chain" / "output"
+        output_dir.mkdir(parents=True)
+        (output_dir / "usci_runtime_qc.json").write_text(
+            '{"runs": [{"contexts": {"CPO": ["warn"]}}]}', encoding="utf-8"
+        )
+
+        with patch.object(discord_bot, "SCRAPER_BASE", tmp_path), \
+             patch("discord_bot.send_discord", new=AsyncMock()) as mock_send:
+            asyncio.run(_check_runtime_qc_and_alert(""))
+
+        mock_send.assert_not_awaited()
+
+    def test_new_warning_since_previous_run_sends_alert(self, tmp_path):
+        import asyncio, json
+        from unittest.mock import AsyncMock
+        from discord_bot import _check_runtime_qc_and_alert
+
+        output_dir = tmp_path / "cpo_chain" / "output"
+        output_dir.mkdir(parents=True)
+        payload = {
+            "runs": [
+                {"contexts": {}},
+                {"contexts": {"CPO": ["[runtime-qc][CPO] orphan nodes: A"]}},
+            ]
+        }
+        (output_dir / "usci_runtime_qc.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        with patch.object(discord_bot, "SCRAPER_BASE", tmp_path), \
+             patch("discord_bot.send_discord", new=AsyncMock()) as mock_send:
+            asyncio.run(_check_runtime_qc_and_alert("https://example.invalid/webhook"))
+
+        mock_send.assert_awaited_once()
+        args, _ = mock_send.call_args
+        assert args[0] == "https://example.invalid/webhook"
+        assert "orphan nodes: A" in args[1]
+
+    def test_unchanged_warning_since_previous_run_sends_nothing(self, tmp_path):
+        import asyncio, json
+        from unittest.mock import AsyncMock
+        from discord_bot import _check_runtime_qc_and_alert
+
+        output_dir = tmp_path / "cpo_chain" / "output"
+        output_dir.mkdir(parents=True)
+        same_warnings = {"CPO": ["[runtime-qc][CPO] orphan nodes: A"]}
+        payload = {"runs": [{"contexts": same_warnings}, {"contexts": same_warnings}]}
+        (output_dir / "usci_runtime_qc.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        with patch.object(discord_bot, "SCRAPER_BASE", tmp_path), \
+             patch("discord_bot.send_discord", new=AsyncMock()) as mock_send:
+            asyncio.run(_check_runtime_qc_and_alert("https://example.invalid/webhook"))
+
+        mock_send.assert_not_awaited()
+
+    def test_corrupt_qc_file_sends_nothing_and_does_not_raise(self, tmp_path):
+        import asyncio
+        from unittest.mock import AsyncMock
+        from discord_bot import _check_runtime_qc_and_alert
+
+        output_dir = tmp_path / "cpo_chain" / "output"
+        output_dir.mkdir(parents=True)
+        (output_dir / "usci_runtime_qc.json").write_text("{ not valid json", encoding="utf-8")
+
+        with patch.object(discord_bot, "SCRAPER_BASE", tmp_path), \
+             patch("discord_bot.send_discord", new=AsyncMock()) as mock_send:
+            asyncio.run(_check_runtime_qc_and_alert("https://example.invalid/webhook"))
+
+        mock_send.assert_not_awaited()
+
+    def test_top_level_json_array_sends_nothing_and_does_not_raise(self, tmp_path):
+        import asyncio
+        from unittest.mock import AsyncMock
+        from discord_bot import _check_runtime_qc_and_alert
+
+        output_dir = tmp_path / "cpo_chain" / "output"
+        output_dir.mkdir(parents=True)
+        (output_dir / "usci_runtime_qc.json").write_text("[]", encoding="utf-8")
+
+        with patch.object(discord_bot, "SCRAPER_BASE", tmp_path), \
+             patch("discord_bot.send_discord", new=AsyncMock()) as mock_send:
+            asyncio.run(_check_runtime_qc_and_alert("https://example.invalid/webhook"))
+
+        mock_send.assert_not_awaited()
+
+    def test_non_dict_run_entries_send_nothing_and_do_not_raise(self, tmp_path):
+        import asyncio, json
+        from unittest.mock import AsyncMock
+        from discord_bot import _check_runtime_qc_and_alert
+
+        output_dir = tmp_path / "cpo_chain" / "output"
+        output_dir.mkdir(parents=True)
+        (output_dir / "usci_runtime_qc.json").write_text(
+            json.dumps({"runs": ["not-a-dict", "also-not-a-dict"]}), encoding="utf-8"
+        )
+
+        with patch.object(discord_bot, "SCRAPER_BASE", tmp_path), \
+             patch("discord_bot.send_discord", new=AsyncMock()) as mock_send:
+            asyncio.run(_check_runtime_qc_and_alert("https://example.invalid/webhook"))
+
+        mock_send.assert_not_awaited()

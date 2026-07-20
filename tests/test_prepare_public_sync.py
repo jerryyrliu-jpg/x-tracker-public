@@ -33,26 +33,28 @@ def test_filter_candidate_paths_splits_allowed_and_blocked():
     candidates = [
         "README.md",
         "docs/public-sync-policy.md",
-        "themes/USCI_Report.md",
+        "archive/USCI_Report.md",
+        "themes/internal-notes.md",
         "graph.html",
     ]
 
     allowed, blocked = filter_candidate_paths(candidates, allowlist)
 
     assert allowed == ["README.md", "docs/public-sync-policy.md"]
-    assert blocked == ["themes/USCI_Report.md", "graph.html"]
+    assert blocked == ["archive/USCI_Report.md", "themes/internal-notes.md", "graph.html"]
 
 
 def test_format_report_includes_allowed_and_blocked_sections():
     report = format_report(
         ["README.md", "docs/public-sync-policy.md"],
-        ["themes/USCI_Report.md"],
+        ["archive/USCI_Report.md", "themes/internal-notes.md"],
     )
 
     assert "Allowed candidate paths:" in report
     assert "- README.md" in report
     assert "Blocked candidate paths:" in report
-    assert "- themes/USCI_Report.md" in report
+    assert "- archive/USCI_Report.md" in report
+    assert "- themes/internal-notes.md" in report
 
 
 def test_write_manifest_writes_one_path_per_line(tmp_path):

@@ -15,6 +15,7 @@ This document defines what may be published from the private `x-tracker` reposit
 - `discord_bot.py`
 - `graph_builder.py`
 - `llm_client.py`
+- `llm_url.py`
 - `monitor_active.py`
 - `monitor_rss.py`
 - `monthly_summary.py`
@@ -23,6 +24,7 @@ This document defines what may be published from the private `x-tracker` reposit
 - `scraper_playwright.py`
 - `utils.py`
 - `scripts/backfill_confidence.py`
+- `scripts/backfill_tweet_images.py`
 - `scripts/fix_cpo_tickers.py`
 - `scripts/import_cpo_chain.py`
 - `scripts/migrate_v2.py`
@@ -33,6 +35,7 @@ This document defines what may be published from the private `x-tracker` reposit
 - `scripts/update_network_html.py`
 - `cpo_chain/__init__.py`
 - `cpo_chain/batch_embed.py`
+- `cpo_chain/ocr_utils.py`
 - `cpo_chain/company_ticker_mapper.py`
 - `cpo_chain/confidence_updater.py`
 - `cpo_chain/db.py`
@@ -45,6 +48,7 @@ This document defines what may be published from the private `x-tracker` reposit
 - `cpo_chain/news_article_fetcher.py`
 - `cpo_chain/news_extractor.py`
 - `cpo_chain/news_fetcher.py`
+- `cpo_chain/normalization.py`
 - `cpo_chain/prompts.py`
 - `cpo_chain/vec_db.py`
 - `docs/public-sync-policy.md`
@@ -58,16 +62,20 @@ This document defines what may be published from the private `x-tracker` reposit
 - `tests/test_db.py`
 - `tests/test_discord_bot.py`
 - `tests/test_edgar_fetcher.py`
+- `tests/test_entity_resolver.py`
 - `tests/test_export_universal.py`
 - `tests/test_extract_universal.py`
 - `tests/test_llm_client.py`
+- `tests/test_llm_url.py`
 - `tests/test_news_article_fetcher.py`
 - `tests/test_news_extractor.py`
 - `tests/test_news_fetcher.py`
+- `tests/test_normalization.py`
 - `tests/test_paths.py`
 - `tests/test_prepare_public_sync.py`
 - `tests/test_prompt.py`
 - `tests/test_release_public_script.py`
+- `tests/test_scraper_playwright.py`
 - `tests/test_slash_commands.py`
 - `tests/test_summary.py`
 - `tests/test_sync_public_repo.py`
@@ -94,6 +102,7 @@ This document defines what may be published from the private `x-tracker` reposit
 - Keep examples generic and runnable without private credentials or local state
 
 ## Forbidden Content
+- `archive/` and `docs/superpowers/` are permanent internal-only areas and must never be published to `x-tracker-public`
 - `.env`
 - `accounts.yaml`
 - `*.db`
@@ -102,6 +111,12 @@ This document defines what may be published from the private `x-tracker` reposit
 - `*.log`
 - `cpo_chain/output/`
 - `cpo_chain/output/**`
+- `archive/`
+- `archive/**`
+- `docs/superpowers/`
+- `docs/superpowers/**`
+- `themes/`
+- `themes/**`
 - `__pycache__/**`
 - `*.pyc`
 - `*.pyo`
